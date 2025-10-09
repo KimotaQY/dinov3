@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 import numpy as np
@@ -5,7 +6,16 @@ import torch
 import torch.optim as optim
 from torch import nn
 from tqdm import tqdm
+from datetime import datetime
 from datasets import build_dataset
+
+# 添加项目根目录到 Python 路径中，以便可以导入 dinov3 模块
+project_root = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from dinov3.logging import setup_logging
 
 deps_path = os.path.join(os.path.dirname(__file__), "task/segmentation")
 sys.path.insert(0, deps_path)
@@ -13,6 +23,7 @@ from model.dino_segment import DINOSegment
 from utils.metrics import CrossEntropy2d, metrics
 from utils.inference import slide_inference
 from utils.utils import set_seed
+from utils.move_files import move_files
 
 BATCH_SIZE = 8
 LABELS = ["roads", "buildings", "low veg.", "trees", "cars",
@@ -21,18 +32,19 @@ N_CLASSES = len(LABELS)  # Number of classes
 WEIGHTS = torch.ones(N_CLASSES)
 EPOCHS = 50
 WINDOW_SIZE = (512, 512)
+DATASET_NAME = "Vaihingen"
 
 
 def main():
     set_seed(42)
-    train_dataset = build_dataset("Vaihingen",
+    train_dataset = build_dataset(DATASET_NAME,
                                   "train",
                                   window_size=WINDOW_SIZE)
     train_loader = torch.utils.data.DataLoader(train_dataset,
                                                batch_size=BATCH_SIZE,
                                                shuffle=True)
 
-    test_dataset = build_dataset("Vaihingen", "test")
+    test_dataset = build_dataset(DATASET_NAME, "test")
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1)
 
     pretrained_model_name = "/home/yyyjvm/Checkpoints/facebook/dinov3-vitl16-pretrain-sat493m"
@@ -40,6 +52,15 @@ def main():
                         n_classes=N_CLASSES,
                         window_size=WINDOW_SIZE)
     # model.to(model.encoder.device)
+
+    # 创建日志目录
+    date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    src_dict = "/home/yyyjvm/SS-projects/dinov3/tasks/segmentation"
+    dst_dict = f"{src_dict}/logs/{date_time}"
+    move_files(src_dict, os.path.join(dst_dict, 'proj_files'),
+               ['logs', '__pycache__', '.pyc'])
+    # 初始化日志系统
+    setup_logging(output=dst_dict, level=logging.INFO, name='dinov3seg')
 
     base_lr = 0.1
     optimizer = optim.SGD(filter(lambda p: p.requires_grad,
@@ -50,7 +71,12 @@ def main():
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, [25, 35, 45],
                                                gamma=0.1)
 
-    train(model, train_loader, test_loader, optimizer, scheduler)
+    train(model,
+          train_loader,
+          test_loader,
+          optimizer,
+          scheduler,
+          save_dir=dst_dict)
     # test(model, test_loader)
 
 
@@ -59,8 +85,11 @@ def train(model,
           test_loader,
           optimizer,
           scheduler,
+          save_dir,
           weights=WEIGHTS):
+    logger = logging.getLogger("dinov3seg")
     epochs = EPOCHS
+    best_IoU = 0.0
     for e in range(1, epochs + 1):
         model.train()
 
@@ -88,12 +117,32 @@ def train(model,
 
         # 计算并打印epoch的平均loss
         avg_loss = total_loss / num_batches
-        print(f"Epoch {e}/{epochs} - Average Loss: {avg_loss:.4f}")
+        logger.info(f"Epoch {e}/{epochs} - Average Loss: {avg_loss:.4f}")
 
         if scheduler is not None:
             scheduler.step()
 
-        test(model, test_loader)
+        # 记录控制台输出
+
+        # 每隔5个epoch保存一次模型
+        if e % 5 == 0:
+            mIoU = test(model, test_loader)
+            if mIoU > best_IoU:
+                best_IoU = mIoU
+                model.save_parameters(
+                    f"checkpoints/dinoseg_{DATASET_NAME}_mIoU{mIoU}.pth")
+
+        if save_dir is not None:
+            model_path = save_dir + "/" + DATASET_NAME + "_checkpoint.pth"
+            torch.save(
+                {
+                    "model": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict(),
+                    "epoch": e + 1,
+                },
+                model_path,
+            )
 
 
 def test(model, test_loader):
