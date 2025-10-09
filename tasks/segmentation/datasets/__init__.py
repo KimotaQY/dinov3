@@ -19,12 +19,14 @@ def build_dataset(dataset_name, data_type="test", **kwargs):
                              data_type=data_type,
                              window_size=kwargs.get("window_size", (224, 224)))
     elif dataset_name == "Vaihingen":
-        ids = ['5', '21', '15', '30'] if data_type == "test" else [
-            '1', '3', '23', '26', '7', '11', '13', '28', '17', '32', '34', '37'
-        ]
+        ids = [2, 4, 6, 8, 10, 12, 14, 16, 20, 22, 24, 27, 29, 31, 33, 35, 38
+               ] if data_type == "test" else [
+                   '1', '3', '5', '7', '11', '13', '15', '17', '21', '23',
+                   '26', '28', '30', '32', '34', '37'
+               ]
         root_dir = "/home/yyyjvm/SS-datasets/ISPRS_dataset/"
         data_dir = root_dir + "Vaihingen/top/top_mosaic_09cm_area{}.tif"
-        label_dir = root_dir + "Vaihingen/gts_for_participants/top_mosaic_09cm_area{}.tif"
+        label_dir = root_dir + "Vaihingen/gts_complete/top_mosaic_09cm_area{}.tif"
         return ISRPS_Dataset(ids=ids,
                              data_dir=data_dir,
                              label_dir=label_dir,
