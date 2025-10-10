@@ -64,7 +64,7 @@ def metrics(predictions, gts, label_values):
     # Compute MIoU coefficient
     MIoU = np.diag(cm) / (np.sum(cm, axis=1) + np.sum(cm, axis=0) -
                           np.diag(cm))
-    logger.info(MIoU)
+    print(MIoU)
     MIoU = np.nanmean(MIoU[:5])
     logger.info('mean MIoU: %.4f' % (MIoU))
     logger.info("---")

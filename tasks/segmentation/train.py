@@ -129,8 +129,20 @@ def train(model,
             mIoU = test(model, test_loader)
             if mIoU > best_IoU:
                 best_IoU = mIoU
-                model.save_parameters(
-                    f"checkpoints/dinoseg_{DATASET_NAME}_mIoU{mIoU}.pth")
+                torch.save({"model": model.state_dict()},
+                           f"{save_dir}/dinoseg_{DATASET_NAME}_mIoU{mIoU}.pth")
+
+            # 清理多余的 .pth 文件
+            model_files = [
+                f for f in os.listdir(save_dir) if f.endswith(".pth")
+            ]
+            if len(model_files) > 5:  # 设置最大保留的模型数量
+                # 按文件创建时间排序，保留最新的 5 个模型
+                model_files.sort(
+                    key=lambda x: os.path.getmtime(os.path.join(save_dir, x)))
+                for file_name in model_files[:-5]:
+                    os.remove(os.path.join(save_dir, file_name))
+                    print(f"Deleted old model: {file_name}")
 
         if save_dir is not None:
             model_path = save_dir + "/" + DATASET_NAME + "_checkpoint.pth"
