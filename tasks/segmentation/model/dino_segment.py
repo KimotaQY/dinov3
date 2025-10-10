@@ -21,19 +21,17 @@ class DINOSegment(nn.Module):
                 'height': window_size[0],
                 'width': window_size[1]
             }
-        self.encoder = AutoModel.from_pretrained(
-            model_name,
-            device_map="auto",
-        )
+        self.encoder = AutoModel.from_pretrained(model_name,
+                                                 # device_map="auto",
+                                                 )
         for param in self.encoder.parameters():
             param.requires_grad = False
 
         self.decoder = LinearHead(in_ch=emb_dim, n_classes=n_classes)
-        self.decoder = self.decoder.to(self.encoder.device)
+        # self.decoder = self.decoder.to(self.encoder.device)
 
-    def forward(self, image):
-        inputs = self.processor(image,
-                                return_tensors="pt").to(self.encoder.device)
+    def forward(self, inputs):
+        inputs = self.processor(inputs, return_tensors="pt")
         with torch.autocast("cuda"):
             with torch.no_grad():
                 outputs = self.encoder(**inputs)
