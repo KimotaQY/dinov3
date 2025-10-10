@@ -33,6 +33,7 @@ WEIGHTS = torch.ones(N_CLASSES)
 EPOCHS = 50
 WINDOW_SIZE = (512, 512)
 DATASET_NAME = "Vaihingen"
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def main():
@@ -44,14 +45,14 @@ def main():
                                                batch_size=BATCH_SIZE,
                                                shuffle=True)
 
-    test_dataset = build_dataset(DATASET_NAME, "test")
+    test_dataset = build_dataset(DATASET_NAME, "test", window_size=WINDOW_SIZE)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1)
 
     pretrained_model_name = "/home/yyyjvm/Checkpoints/facebook/dinov3-vitl16-pretrain-sat493m"
     model = DINOSegment(pretrained_model_name,
                         n_classes=N_CLASSES,
                         window_size=WINDOW_SIZE)
-    # model.to(model.encoder.device)
+    model.to(device)
 
     # 创建日志目录
     date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -99,11 +100,12 @@ def train(model,
         iterations = tqdm(train_loader)
         for input, label in iterations:
             optimizer.zero_grad()
-            logits = model(input)
+
+            logits = model(input.to(device))
 
             loss = CrossEntropy2d(logits,
-                                  label.to(logits.device),
-                                  weight=weights.to(logits.device))
+                                  label.to(device),
+                                  weight=weights.to(device))
 
             loss.backward()
             optimizer.step()
@@ -166,7 +168,9 @@ def test(model, test_loader):
     iterations = tqdm(test_loader)
     for input, label in iterations:
         with torch.no_grad():
-            pred = slide_inference(input, model, n_output_channels=N_CLASSES)
+            pred = slide_inference(input.to(device),
+                                   model,
+                                   n_output_channels=N_CLASSES)
 
         pred = np.argmax(pred, axis=1)
         preds.append(pred)
