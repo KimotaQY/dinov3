@@ -22,11 +22,11 @@ def move_files(src_dir, dst_dir, exclude_names):
         relpath = os.path.relpath(root, src_dir)
         if os.path.basename(relpath) in exclude_names:
             continue
-        print(f"当前目录: {root}")
-        print(f"当前相对目录: {relpath}")
+        # print(f"当前目录: {root}")
+        # print(f"当前相对目录: {relpath}")
         for dir_name in dirs:
             if dir_name not in exclude_names:
-                print(f"子目录: {dir_name}")
+                # print(f"子目录: {dir_name}")
                 dst_path = os.path.join(dst_dir, relpath, dir_name)
                 # 创建目标目录（如果不存在）
                 if not os.path.exists(dst_path):
@@ -35,7 +35,7 @@ def move_files(src_dir, dst_dir, exclude_names):
         # 复制文件
         for file in files:
             if file not in exclude_names:
-                print(f"文件: {file}")
+                # print(f"文件: {file}")
                 src_path = os.path.join(root, file)
                 dst_path = os.path.join(dst_dir, relpath, file)
                 shutil.copy2(src_path, dst_path)

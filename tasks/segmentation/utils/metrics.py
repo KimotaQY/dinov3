@@ -27,7 +27,7 @@ def metrics(predictions, gts, label_values):
     cm = confusion_matrix(gts, predictions, labels=range(len(label_values)))
 
     logger.info("Confusion matrix :")
-    logger.info(cm)
+    print(cm)
     # Compute global accuracy
     total = sum(sum(cm))
     accuracy = sum([cm[x][x] for x in range(len(cm))])
