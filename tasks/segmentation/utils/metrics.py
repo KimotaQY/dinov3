@@ -1,6 +1,7 @@
 import logging
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 from sklearn.metrics import confusion_matrix
@@ -19,6 +20,98 @@ def CrossEntropy2d(input, target, weight=None, size_average=True):
         return F.cross_entropy(output, target, weight, size_average)
     else:
         raise ValueError('Expected 2 or 4 dimensions (got {})'.format(dim))
+
+
+def DiceLoss(inputs, targets):
+    smooth = 1e-6
+    # 将输入经过softmax处理
+    inputs = torch.softmax(inputs, dim=1)
+
+    # 转换为目标格式
+    # 根据输入维度动态处理
+    if inputs.dim() == 4:  # batch_size x channels x height x width
+        targets_one_hot = F.one_hot(targets,
+                                    num_classes=inputs.shape[1]).permute(
+                                        0, 3, 1, 2).float()
+    else:
+        raise ValueError(f"Unsupported input dimensions: {inputs.dim()}")
+
+    # 展平
+    inputs = inputs.reshape(-1)
+    targets_one_hot = targets_one_hot.reshape(-1)
+
+    intersection = (inputs * targets_one_hot).sum()
+    dice = (2. * intersection + smooth) / (inputs.sum() +
+                                           targets_one_hot.sum() + smooth)
+
+    return 1 - dice
+
+
+class DiceLossOptimized(nn.Module):
+    """
+    优化版本的Dice Loss，可以作为模块使用
+    """
+
+    def __init__(self, smooth=1e-6):
+        super(DiceLossOptimized, self).__init__()
+        self.smooth = smooth
+
+    def forward(self, inputs, targets):
+        # 对输入应用softmax
+        inputs = torch.softmax(inputs, dim=1)
+
+        # 获取类别数
+        num_classes = inputs.shape[1]
+
+        # 将目标转换为one-hot编码
+        targets_one_hot = F.one_hot(targets, num_classes=num_classes)
+
+        # 调整维度: 从 [B, H, W, C] 转换为 [B, C, H, W]
+        targets_one_hot = targets_one_hot.permute(0, 3, 1, 2).float()
+
+        # 展平输入和目标
+        inputs = inputs.reshape(-1)
+        targets_one_hot = targets_one_hot.reshape(-1)
+
+        # 计算交集
+        intersection = (inputs * targets_one_hot).sum()
+
+        # 计算Dice系数
+        dice = (2. * intersection + self.smooth) / (
+            inputs.sum() + targets_one_hot.sum() + self.smooth)
+
+        return 1 - dice
+
+
+class CombinedLoss(nn.Module):
+    """
+    组合损失函数：结合交叉熵和Dice损失
+    """
+
+    def __init__(self, weight_ce=0.5, weight_dice=0.5, smooth=1e-6):
+        super(CombinedLoss, self).__init__()
+        self.weight_ce = weight_ce
+        self.weight_dice = weight_dice
+        self.dice_loss = DiceLossOptimized(smooth=smooth)
+
+    def forward(self, inputs, targets, weight=None):
+        if inputs.dim() == 4:
+            output = inputs.view(inputs.size(0), inputs.size(1), -1)
+            output = torch.transpose(output, 1, 2).contiguous()
+            output = output.view(-1, output.size(2))
+            ce = F.cross_entropy(output,
+                                 targets.view(-1),
+                                 weight=weight,
+                                 size_average=True)
+        else:
+            ce = F.cross_entropy(inputs,
+                                 targets,
+                                 weight=weight,
+                                 size_average=True)
+
+        dice = self.dice_loss(inputs, targets)
+        # return self.weight_ce * ce + self.weight_dice * dice
+        return ce, dice
 
 
 def metrics(predictions, gts, label_values):
