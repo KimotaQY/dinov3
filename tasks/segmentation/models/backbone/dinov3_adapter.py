@@ -499,15 +499,6 @@ class DINOv3_Adapter(nn.Module):
 
         with torch.autocast("cuda", torch.bfloat16):
             with torch.no_grad():
-                # _all_layers = self.backbone(**inputs,
-                #                             output_hidden_states=True)
-                # all_layers = list()
-                # for i, layer in enumerate(_all_layers.hidden_states):
-                #     if i in self.interaction_indexes:
-                #         all_layers.append(layer)
-
-                # del _all_layers
-
                 all_layers = self.backbone.get_intermediate_layers(
                     x, n=self.interaction_indexes, return_class_token=True)
 
@@ -528,9 +519,6 @@ class DINOv3_Adapter(nn.Module):
 
         outs = list()
         for i, layer in enumerate(self.interactions):
-            # cls = all_layers[i][:, 0]  # 全局（[CLS]）
-            # num_regs = self.backbone.config.num_register_tokens
-            # x = all_layers[i][:, 1 + num_regs:, :]
             x, cls = all_layers[i]
             _, c, _ = layer(
                 x,

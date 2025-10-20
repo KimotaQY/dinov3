@@ -21,13 +21,13 @@ import dinov3.distributed as distributed
 
 deps_path = os.path.join(os.path.dirname(__file__), "task/segmentation")
 sys.path.insert(0, deps_path)
-from model.dino_segment import DINOSegment
-from utils.metrics import CrossEntropy2d, metrics
+from models.dino_segment import DINOSegment
+from utils.metrics import CrossEntropy2d, DiceLoss, metrics, CombinedLoss
 from utils.inference import slide_inference
 from utils.utils import set_seed
 from utils.move_files import move_files
 
-BATCH_SIZE = 8
+BATCH_SIZE = 6
 LABELS = ["roads", "buildings", "low veg.", "trees", "cars",
           "clutter"]  # Label names
 N_CLASSES = len(LABELS)  # Number of classes
@@ -85,7 +85,9 @@ def main():
     test_dataset = build_dataset(DATASET_NAME, "test", window_size=WINDOW_SIZE)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1)
 
+    backbone_weights = "/home/yyyjvm/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
     model = DINOSegment(pretrained_model_name,
+                        backbone_weights=backbone_weights,
                         n_classes=N_CLASSES,
                         window_size=WINDOW_SIZE)
 
@@ -100,7 +102,9 @@ def main():
             device_ids=[get_local_rank()]
             if torch.cuda.is_available() else None,
             output_device=get_local_rank()
-            if torch.cuda.is_available() else None)
+            if torch.cuda.is_available() else None,
+            find_unused_parameters=True,  # 这将允许模型在某些参数未参与损失计算时仍能正常工作
+        )
 
     # 创建日志目录
     date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -109,23 +113,39 @@ def main():
 
     # 只在主进程上创建目录和保存文件
     if distributed.is_main_process():
+        print(f"正在将文件移动到 {dst_dict}...")
         move_files(src_dict, os.path.join(dst_dict, 'proj_files'),
                    ['logs', '__pycache__', '.pyc'])
+        print("=====文件移动完成=====")
         # 初始化日志系统
         setup_logging(output=dst_dict, level=logging.INFO, name='dinov3seg')
 
     # 根据GPU数量调整学习率
-    base_lr = 0.1
+    base_lr = 1e-4
     if distributed.is_enabled():
         base_lr = base_lr * distributed.get_world_size()
 
-    optimizer = optim.SGD(filter(lambda p: p.requires_grad,
-                                 model.parameters()),
-                          lr=base_lr,
-                          momentum=0.9,
-                          weight_decay=0.0005)
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, [25, 35, 45],
-                                               gamma=0.1)
+    # 打印所有可学习参数
+    # if distributed.is_main_process():
+    #     print("Trainable parameters:")
+    #     for name, param in model.named_parameters():
+    #         if param.requires_grad:
+    #             print(f"  {name}: {param.shape}")
+
+    # 修改优化器设置，确保所有需要训练的参数都被包含
+    # 原来的filter可能会遗漏一些参数
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+
+    # optimizer = optim.SGD(trainable_params,
+    #                       lr=base_lr,
+    #                       momentum=0.9,
+    #                       weight_decay=0.0005)
+    optimizer = optim.AdamW(trainable_params, lr=base_lr, weight_decay=0.01)
+    # scheduler = optim.lr_scheduler.MultiStepLR(optimizer, [25, 35, 45],
+    #                                            gamma=0.1)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,
+                                                     T_max=EPOCHS,
+                                                     eta_min=1e-7)
 
     train(model,
           train_loader,
@@ -147,6 +167,7 @@ def train(model,
     epochs = EPOCHS
     best_IoU = 0.0
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    CLoss = CombinedLoss()
 
     for e in range(1, epochs + 1):
         model.train()
@@ -165,17 +186,37 @@ def train(model,
             optimizer.zero_grad()
             logits = model(input)
 
-            loss = CrossEntropy2d(logits, label, weight=weights.to(device))
+            # loss_ce = CrossEntropy2d(logits, label, weight=weights.to(device))
+            # loss_dice = DiceLoss(logits, label)
+            loss_ce, loss_dice = CLoss(logits,
+                                       label,
+                                       weight=weights.to(device))
+
+            loss = loss_ce + loss_dice
+
+            # 添加调试信息来帮助定位问题
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"NaN or Inf detected in loss:")
+                print(f"logits shape: {logits.shape}")
+                print(f"label shape: {label.shape}")
+                print(f"label min: {label.min()}, label max: {label.max()}")
+                print(f"unique labels: {torch.unique(label)}")
+                print(f"weights: {weights}")
+                sys.exit(1)
 
             loss.backward()
+
+            # 梯度裁剪，防止梯度爆炸
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             total_loss += loss.data
             num_batches += 1
 
             if distributed.is_main_process():
-                iterations.set_description("Epoch: {}/{} Loss: {:.4f}".format(
-                    e, epochs, loss.data))
+                iterations.set_description(
+                    "Epoch: {}/{} Loss: {:.4f} + {:.4f}".format(
+                        e, epochs, loss_ce.data, loss_dice.data))
             # print('loss:', loss.data)
 
         # 计算并打印epoch的平均loss
@@ -183,7 +224,10 @@ def train(model,
 
         # 在分布式训练中同步损失
         if distributed.is_enabled():
-            avg_loss_tensor = torch.tensor(avg_loss).to(device)
+            avg_loss_tensor = torch.tensor(
+                avg_loss, device=device) if not isinstance(
+                    avg_loss,
+                    torch.Tensor) else avg_loss.detach().clone().to(device)
             torch.distributed.all_reduce(avg_loss_tensor)
             avg_loss_tensor /= distributed.get_world_size()
             avg_loss = avg_loss_tensor.item()
@@ -202,8 +246,10 @@ def train(model,
                 # 保存模型时考虑分布式包装
                 model_state = model.module.state_dict() if hasattr(
                     model, 'module') else model.state_dict()
-                torch.save({"model": model_state},
-                           f"{save_dir}/dinoseg_{DATASET_NAME}_mIoU{mIoU}.pth")
+                torch.save({
+                    "model": model_state
+                }, f"{save_dir}/dinoseg_{DATASET_NAME}_e{e}_mIoU{round(mIoU*100, 2)}.pth"
+                           )
 
             # 清理多余的 .pth 文件
             if save_dir is not None:
@@ -229,13 +275,15 @@ def train(model,
                     "model": model_state,
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict(),
-                    "epoch": e + 1,
+                    "epoch": e,
                 },
                 model_path,
             )
 
 
 def test(model, test_loader):
+    # 清理缓存
+    torch.cuda.empty_cache()
     # 确定设备
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
