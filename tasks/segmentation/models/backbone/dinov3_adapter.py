@@ -497,10 +497,10 @@ class DINOv3_Adapter(nn.Module):
             3] // self.patch_size
         bs, C, h, w = x.shape
 
-        with torch.autocast("cuda", torch.bfloat16):
-            with torch.no_grad():
-                all_layers = self.backbone.get_intermediate_layers(
-                    x, n=self.interaction_indexes, return_class_token=True)
+        with torch.autocast("cuda", torch.float32):
+            # with torch.no_grad():
+            all_layers = self.backbone.get_intermediate_layers(
+                x, n=self.interaction_indexes, return_class_token=True)
 
         x_for_shape, _ = all_layers[0]
         bs, _, dim = x_for_shape.shape
