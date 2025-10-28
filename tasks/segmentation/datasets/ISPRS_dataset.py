@@ -102,9 +102,9 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
             data, label = vflip(data, label, p=0.5)
             # data, label = rotate(data, label, p=0.5)
 
-            data = color_jitter(data, p=0.8)
-            data = grayscale(data, p=0.2)
-            data = blur(data, p=0.5)
+            # data = color_jitter(data, p=0.8)
+            # data = grayscale(data, p=0.2)
+            # data = blur(data, p=0.5)
 
             # convert to np.array
             data = np.array(data, dtype='float32').transpose((2, 0, 1)) / 255.0
