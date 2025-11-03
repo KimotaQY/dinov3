@@ -1,4 +1,6 @@
+import os
 from .ISPRS_dataset import ISRPS_Dataset
+from .YYYJ_dataset import YYYJ_Dataset
 
 
 def build_dataset(dataset_name, data_type="test", **kwargs):
@@ -31,3 +33,20 @@ def build_dataset(dataset_name, data_type="test", **kwargs):
                              dataset_name=dataset_name,
                              data_type=data_type,
                              window_size=kwargs.get("window_size", (224, 224)))
+    elif dataset_name == "YYYJ":
+        train_dir = "/home/yyyjvm/SS-datasets/YYYJ_dataset/train"
+        test_dir = "/home/yyyjvm/SS-datasets/YYYJ_dataset/test"
+        # 读取文件夹中所有tif文件名
+        ids = [
+            f.split(".")[0] for f in os.listdir(test_dir) if f.endswith(".tif")
+        ] if data_type == "test" else [
+            f.split(".")[0] for f in os.listdir(train_dir)
+            if f.endswith(".tif")
+        ]
+        data_dir = test_dir + "/{}.tif" if data_type == "test" else train_dir + "/{}.tif"
+        label_dir = test_dir + "/label_masks/{}.tif" if data_type == "test" else train_dir + "/label_masks/{}.tif"
+        return YYYJ_Dataset(ids=ids,
+                            data_dir=data_dir,
+                            label_dir=label_dir,
+                            data_type=data_type,
+                            window_size=kwargs.get("window_size", (224, 224)))

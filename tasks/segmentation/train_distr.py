@@ -20,7 +20,8 @@ from dinov3.logging import setup_logging
 import dinov3.distributed as distributed
 
 deps_path = os.path.join(os.path.dirname(__file__), "task/segmentation")
-sys.path.insert(0, deps_path)
+if deps_path not in sys.path:
+    sys.path.insert(0, deps_path)
 from models.dino_segment import DINOSegment
 from utils.metrics import CrossEntropy2d, DiceLoss, metrics, CombinedLoss
 from utils.inference import slide_inference
@@ -28,13 +29,24 @@ from utils.utils import set_seed
 from utils.move_files import move_files
 
 BATCH_SIZE = 6
-LABELS = ["roads", "buildings", "low veg.", "trees", "cars",
-          "clutter"]  # Label names
+DATASET_NAME = "YYYJ"
+if DATASET_NAME == "Vaihingen" or DATASET_NAME == "Potsdam":
+    LABELS = ["roads", "buildings", "low veg.", "trees", "cars",
+              "clutter"]  # Label names
+elif DATASET_NAME == "YYYJ":
+    # LABELS = [
+    #     "地基建设", "基础结构建设", "封顶厂房", "封顶楼房", "施工道路", "硬化道路", "风电施工", "风电", "光伏",
+    #     "推填土", "体育场地", "临时棚房", "自建房", "未定义"
+    # ]
+    LABELS = [
+        "地基建设", "基础结构建设", "封顶厂房", "封顶楼房", "施工道路", "硬化道路", "推填土", "体育场地",
+        "临时棚房", "自建房", "专属设施", "未定义"
+    ]
 N_CLASSES = len(LABELS)  # Number of classes
 WEIGHTS = torch.ones(N_CLASSES)
-EPOCHS = 50
+WEIGHTS[-1] = 0.1  # 针对背景进行特殊处理
+EPOCHS = 100
 WINDOW_SIZE = (512, 512)
-DATASET_NAME = "Vaihingen"
 
 
 def get_local_rank():
@@ -109,7 +121,7 @@ def main():
     # 创建日志目录
     date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     src_dict = "/home/yyyjvm/SS-projects/dinov3/tasks/segmentation"
-    dst_dict = f"{src_dict}/logs/{date_time}"
+    dst_dict = f"{src_dict}/logs/{DATASET_NAME}_{date_time}"
 
     # 只在主进程上创建目录和保存文件
     if distributed.is_main_process():
@@ -121,7 +133,7 @@ def main():
         setup_logging(output=dst_dict, level=logging.INFO, name='dinov3seg')
 
     # 根据GPU数量调整学习率
-    base_lr = 1e-4
+    base_lr = 3e-5
     if distributed.is_enabled():
         base_lr = base_lr * distributed.get_world_size()
 
@@ -202,6 +214,11 @@ def train(model,
                 print(f"label min: {label.min()}, label max: {label.max()}")
                 print(f"unique labels: {torch.unique(label)}")
                 print(f"weights: {weights}")
+                logger.error(
+                    f"logits min: {logits.min()}, logits max: {logits.max()}")
+                logger.error(
+                    f"logits mean: {logits.mean()}, logits std: {logits.std()}"
+                )
                 sys.exit(1)
 
             loss.backward()
