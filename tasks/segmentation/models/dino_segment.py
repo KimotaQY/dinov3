@@ -44,7 +44,7 @@ class DINOSegment(nn.Module):
             n_classes: int = 1000,
             hidden_dim=2048,
             window_size=(224, 224),
-            use_lora: bool = True,
+            use_lora: bool = False,
             r: int = 3,
     ):
         super().__init__()

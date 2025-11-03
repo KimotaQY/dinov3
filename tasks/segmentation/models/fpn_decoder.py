@@ -74,7 +74,7 @@ class FPNDecoder(nn.Module):
         self.fusion3 = HaarFusion(inner_channels[2], wave='haar')
 
         self.gcbam0 = GCBAM(in_channels)
-        self.gcbam1 = GCBAM(out_channels)
+        # self.gcbam1 = GCBAM(out_channels)
         # self.gcbam2 = GCBAM(inner_channels[1])
         # self.gcbam3 = GCBAM(inner_channels[2])
         # self.gcbam4 = GCBAM(inner_channels[3])
@@ -169,7 +169,7 @@ class FPNDecoder(nn.Module):
         x = features[-1]
 
         # x = self.conv1(x)  # 256
-        x = self.gcbam1(x)
+        # x = self.gcbam1(x)
 
         x = self.fusion1(features[-2], x)  # 256
         x = self.conv2(x)
