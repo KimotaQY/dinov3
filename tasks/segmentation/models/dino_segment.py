@@ -10,6 +10,7 @@ from transformers.image_utils import load_image
 
 from .linear_decoder import LinearHead
 from .fpn_decoder import FPNDecoder
+from .prn_decoder import PRNDecoder
 from .backbone.dinov3_adapter import DINOv3_Adapter
 from .heads.mask2former_head import Mask2FormerHead
 from .heads.pixel_decoder import MSDeformAttnPixelDecoder
@@ -104,9 +105,12 @@ class DINOSegment(nn.Module):
         #     transformer_in_features=["1", "2", "3", "4"],
         #     common_stride=4,
         # )
-        self.fpn = FPNDecoder(in_channels=embed_dim,
-                              out_channels=256,
-                              n_classes=n_classes)
+        self.decoder = PRNDecoder(in_channels=[embed_dim] * 4,
+                                  out_channels=256,
+                                  n_classes=n_classes)
+        # self.fpn = FPNDecoder(in_channels=embed_dim,
+        #                       out_channels=256,
+        #                       n_classes=n_classes)
         # for param in self.decoder.parameters():
         #     param.requires_grad = True
 
@@ -168,7 +172,8 @@ class DINOSegment(nn.Module):
             outputs["3"],
             outputs["4"]  # 低分辨率特征
         ]
-        logits = self.fpn(multi_scale_features)
+        # logits = self.fpn(multi_scale_features)
+        logits = self.decoder(multi_scale_features)
 
         # pixel_decoder + fpn
         # _, _, multi_scale_features = self.pixel_decoder.forward_features(

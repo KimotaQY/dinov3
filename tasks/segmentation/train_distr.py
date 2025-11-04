@@ -28,8 +28,8 @@ from utils.inference import slide_inference
 from utils.utils import set_seed
 from utils.move_files import move_files
 
-BATCH_SIZE = 6
-DATASET_NAME = "YYYJ"
+BATCH_SIZE = 8
+DATASET_NAME = "Vaihingen"
 if DATASET_NAME == "Vaihingen" or DATASET_NAME == "Potsdam":
     LABELS = ["roads", "buildings", "low veg.", "trees", "cars",
               "clutter"]  # Label names
@@ -44,8 +44,9 @@ elif DATASET_NAME == "YYYJ":
     ]
 N_CLASSES = len(LABELS)  # Number of classes
 WEIGHTS = torch.ones(N_CLASSES)
-WEIGHTS[-1] = 0.1  # 针对背景进行特殊处理
-EPOCHS = 100
+if DATASET_NAME == "YYYJ":
+    WEIGHTS[-1] = 0.1  # 针对背景进行特殊处理
+EPOCHS = 50
 WINDOW_SIZE = (512, 512)
 
 
@@ -312,7 +313,12 @@ def test(model, test_loader):
     for input, label in iterations:
         input = input.to(device)
         with torch.no_grad():
-            pred = slide_inference(input, model, n_output_channels=N_CLASSES)
+            s_w = int(WINDOW_SIZE[0] * 2 / 3)
+            pred = slide_inference(input,
+                                   model,
+                                   n_output_channels=N_CLASSES,
+                                   crop_size=WINDOW_SIZE,
+                                   stride=(s_w, s_w))
 
         pred = np.argmax(pred, axis=1)
         preds.append(pred)
