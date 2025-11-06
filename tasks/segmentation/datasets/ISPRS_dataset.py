@@ -107,12 +107,12 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
             # data = blur(data, p=0.5)
 
             # convert to np.array
-            data = np.array(data, dtype='float32').transpose((2, 0, 1)) / 255.0
+            data = np.array(data, dtype='float32').transpose((2, 0, 1))
             label = np.array(label)
             label = np.asarray(self.convert_from_color(label), dtype='int64')
         else:
             data = Image.open(self.data_files[idx]).convert('RGB')
-            data = np.array(data, dtype='float32').transpose((2, 0, 1)) / 255.0
+            data = np.array(data, dtype='float32').transpose((2, 0, 1))
 
             label_img = Image.open(self.label_files[idx]).convert('RGB')
             label_arr = np.array(label_img)
