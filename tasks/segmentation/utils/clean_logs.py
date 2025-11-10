@@ -4,7 +4,7 @@ import os
 import shutil
 
 
-def clean_logs(log_dir):
+def clean_logs(log_dir, min_cktp_num: int = 0):
     # 获取目录下的所有文件夹
     dirs = [
         d for d in os.listdir(log_dir)
@@ -18,8 +18,12 @@ def clean_logs(log_dir):
             # 如果不存在.pth后缀文件，则删除该文件夹
             shutil.rmtree(dir_path)
             print(f"Deleted empty directory: {dir_path}")
+        elif len(pth_files) <= min_cktp_num:
+            # 如果存在.pth后缀文件，但数量小于等于min_cktp_num，则删除该文件夹
+            shutil.rmtree(dir_path)
+            print(f"Deleted directory with few checkpoints: {dir_path}")
 
 
 if __name__ == "__main__":
     log_dir = "/home/yyyjvm/SS-projects/dinov3/tasks/segmentation/logs"
-    clean_logs(log_dir)
+    clean_logs(log_dir, 1)
