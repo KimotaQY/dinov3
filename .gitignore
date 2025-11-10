@@ -17,3 +17,4 @@ logs/
 
 # Ignore vscode directory
 .vscode/
+dinov3/eval/segmentation/models/utils/ops/MultiScaleDeformableAttention.cpython-311-x86_64-linux-gnu.so
