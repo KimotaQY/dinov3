@@ -64,7 +64,7 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
             self.imagenet_std = None
 
     def __len__(self):
-        interval_num = (512**2 / self.window_size[0]**2) * 100  # 512尺寸时为*100
+        interval_num = (256**2 / self.window_size[0]**2) * 1000  # 256尺寸时为*1000
         data_len = len(self.data_files
                        ) * interval_num if self.data_type == 'train' else len(
                            self.data_files)
@@ -80,13 +80,9 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
                 if self.dataset_name == 'Potsdam':
                     data = Image.open(
                         self.data_files[random_idx]).convert('RGB')
-                    # data = np.array(data, dtype='float32').transpose(
-                    #     (2, 0, 1)) / 255.0
                 elif self.dataset_name == 'Vaihingen':
                     data = Image.open(
                         self.data_files[random_idx]).convert('RGB')
-                    # data = np.array(data, dtype='float32').transpose(
-                    #     (2, 0, 1)) / 255.0
 
                 self.data_cache[random_idx] = data
 
@@ -94,9 +90,6 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
                 label = self.label_cache[random_idx]
             else:
                 label = Image.open(self.label_files[random_idx]).convert('RGB')
-                # label_arr = np.array(label_img)
-                # label = np.asarray(self.convert_from_color(label_arr),
-                #                    dtype='int64')
 
                 self.label_cache[random_idx] = label
 
