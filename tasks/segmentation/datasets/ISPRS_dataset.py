@@ -4,6 +4,8 @@ import sys
 import numpy as np
 import torch
 from PIL import Image
+import torchvision.transforms.functional as TF
+import albumentations as albu
 
 deps_path = os.path.join(os.path.dirname(__file__), "task/segmentation")
 sys.path.insert(0, deps_path)
@@ -16,7 +18,7 @@ palette = {
     3: (0, 255, 0),  # Trees (green)
     4: (255, 255, 0),  # Cars (yellow)
     5: (255, 0, 0),  # Clutter (red)
-    # 6: (0, 0, 0)
+    6: (0, 0, 0)
 }  # Undefined (black)
 
 invert_palette = {v: k for k, v in palette.items()}
@@ -30,7 +32,8 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
                  label_dir,
                  dataset_name,
                  data_type,
-                 window_size=(224, 224)):
+                 window_size=(224, 224),
+                 normalize_type=None):
         super(ISRPS_Dataset, self).__init__()
 
         self.dataset_name = dataset_name
@@ -50,10 +53,22 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
         self.data_cache = {}
         self.label_cache = {}
 
+        if normalize_type == "geo":
+            self.imagenet_mean = (0.430, 0.411, 0.296)
+            self.imagenet_std = (0.213, 0.156, 0.143)
+        elif normalize_type == "common":
+            self.imagenet_mean = (0.485, 0.456, 0.406)
+            self.imagenet_std = (0.229, 0.224, 0.225)
+        else:
+            self.imagenet_mean = None
+            self.imagenet_std = None
+
     def __len__(self):
-        return len(
-            self.data_files) * 100 if self.data_type == 'train' else len(
-                self.data_files)
+        interval_num = (512**2 / self.window_size[0]**2) * 100  # 512尺寸时为*100
+        data_len = len(self.data_files
+                       ) * interval_num if self.data_type == 'train' else len(
+                           self.data_files)
+        return int(data_len)
 
     def __getitem__(self, idx):
         if self.data_type == 'train':
@@ -96,8 +111,8 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
                 label = label.crop((y1, x1, y2, x2))
 
             # 弱增强
-            # data, label = resize(data, label, (0.5, 2.0))
-            # data, label = crop(data, label, self.window_size[0])
+            data, label = resize(data, label, (0.5, 2.0))
+            data, label = crop(data, label, self.window_size[0])
             data, label = hflip(data, label, p=0.5)
             data, label = vflip(data, label, p=0.5)
             # data, label = rotate(data, label, p=0.5)
@@ -107,17 +122,23 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
             # data = blur(data, p=0.5)
 
             # convert to np.array
-            data = np.array(data, dtype='float32').transpose((2, 0, 1))
+            # data = np.array(data, dtype='float32').transpose((2, 0, 1))
             label = np.array(label)
             label = np.asarray(self.convert_from_color(label), dtype='int64')
         else:
             data = Image.open(self.data_files[idx]).convert('RGB')
-            data = np.array(data, dtype='float32').transpose((2, 0, 1))
+            # data = np.array(data, dtype='float32').transpose((2, 0, 1))
 
             label_img = Image.open(self.label_files[idx]).convert('RGB')
             label_arr = np.array(label_img)
             label = np.asarray(self.convert_from_color(label_arr),
                                dtype='int64')
+
+        data = TF.to_tensor(data)  # Convert image to tensor
+        if self.imagenet_mean is not None:
+            data = TF.normalize(
+                data, self.imagenet_mean,
+                self.imagenet_std)  # Normalize with ImageNet mean and std
 
         return data, label
 

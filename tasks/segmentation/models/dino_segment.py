@@ -12,6 +12,7 @@ from .linear_decoder import LinearHead
 from .fpn_decoder import FPNDecoder
 from .prn_decoder import PRNDecoder
 from .backbone.dinov3_adapter import DINOv3_Adapter
+from .backbone.sample_adapter import SampleAdapter
 from .heads.mask2former_head import Mask2FormerHead
 from .heads.pixel_decoder import MSDeformAttnPixelDecoder
 from .lora import LoRA
@@ -40,7 +41,7 @@ class DINOSegment(nn.Module):
 
     def __init__(
             self,
-            model_name,
+            # model_name,
             backbone_weights=None,
             n_classes: int = 1000,
             hidden_dim=2048,
@@ -50,12 +51,12 @@ class DINOSegment(nn.Module):
     ):
         super().__init__()
 
-        self.processor = AutoImageProcessor.from_pretrained(model_name)
-        if window_size is not None:
-            self.processor.size = {
-                'height': window_size[0],
-                'width': window_size[1]
-            }
+        # self.processor = AutoImageProcessor.from_pretrained(model_name)
+        # if window_size is not None:
+        #     self.processor.size = {
+        #         'height': window_size[0],
+        #         'width': window_size[1]
+        #     }
 
         if backbone_weights is not None:
             self.backbone = dinov3_vitl16(weights=backbone_weights,
@@ -63,16 +64,19 @@ class DINOSegment(nn.Module):
         else:
             self.backbone = dinov3_vitl16(pretrained=False)
 
-        # for param in self.backbone.parameters():
-        #     param.requires_grad = False
+        # Important: we freeze the backbone
+        self.backbone.requires_grad_(False)
 
-        self.backbone = DINOv3_Adapter(
-            self.backbone,
-            interaction_indexes=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"],
-        )
+        embed_dim = self.backbone.embed_dim
 
-        embed_dim = self.backbone.backbone.embed_dim
-        patch_size = self.backbone.patch_size
+        # self.backbone = DINOv3_Adapter(
+        #     self.backbone,
+        #     interaction_indexes=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"],
+        # )
+
+        # 更简单的adapter
+        self.adapter = SampleAdapter(embed_dim, [256] * 4)
+
         # self.decoder = Mask2FormerHead(
         #     input_shape={
         #         "1": [embed_dim, patch_size * 4, patch_size * 4, 4],
@@ -105,7 +109,7 @@ class DINOSegment(nn.Module):
         #     transformer_in_features=["1", "2", "3", "4"],
         #     common_stride=4,
         # )
-        self.decoder = PRNDecoder(in_channels=[embed_dim] * 4,
+        self.decoder = PRNDecoder(in_channels=[256] * 4,
                                   out_channels=256,
                                   n_classes=n_classes)
         # self.fpn = FPNDecoder(in_channels=embed_dim,
@@ -118,11 +122,11 @@ class DINOSegment(nn.Module):
         # Add LoRA layers to the encoder
         self.use_lora = use_lora
         if self.use_lora:
-            self.lora_layers = list(range(len(self.backbone.backbone.blocks)))
+            self.lora_layers = list(range(len(self.backbone.blocks)))
             self.w_a = []
             self.w_b = []
 
-            for i, block in enumerate(self.backbone.backbone.blocks):
+            for i, block in enumerate(self.backbone.blocks):
                 if i not in self.lora_layers:
                     continue
                 w_qkv_linear = block.attn.qkv
@@ -156,22 +160,28 @@ class DINOSegment(nn.Module):
 
     def forward(self, inputs):
         _, _, H, W = inputs.shape
+        patch_h, patch_w = inputs.shape[-2] // 16, inputs.shape[-1] // 16
 
-        inputs = self.processor(inputs, return_tensors="pt")
+        # inputs = self.processor(inputs, return_tensors="pt")
 
-        with torch.autocast("cuda"):
-            outputs = self.backbone.forward(inputs.data['pixel_values'])
+        # 使用DINOv3_Adapter时
+        # outputs = self.backbone.forward(inputs.data['pixel_values'])
+        # 多尺度特征
+        # multi_scale_features = [
+        #     outputs["1"],  # 高分辨率特征
+        #     outputs["2"],
+        #     outputs["3"],
+        #     outputs["4"]  # 低分辨率特征
+        # ]
 
-        # pred = self.decoder(outputs['3'])
-        # pred = self.decoder(outputs)
+        # 使用SampleAdapter时
+        outputs = self.backbone.get_intermediate_layers(
+            # inputs.data['pixel_values'],
+            inputs,
+            n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
 
-        # 仅使用FPN
-        multi_scale_features = [
-            outputs["1"],  # 高分辨率特征
-            outputs["2"],
-            outputs["3"],
-            outputs["4"]  # 低分辨率特征
-        ]
+        multi_scale_features = self.adapter(outputs, patch_h, patch_w)
+
         # logits = self.fpn(multi_scale_features)
         logits = self.decoder(multi_scale_features)
 
@@ -180,23 +190,13 @@ class DINOSegment(nn.Module):
         #     outputs)
         # logits = self.fpn(multi_scale_features[::-1])
 
-        # 确保输出大小与输入一致
-        pred = F.interpolate(
-            logits,
-            size=(H, W),
-            mode="bilinear",
-        )
-
-        # mask_pred, mask_cls = pred["pred_masks"], pred["pred_logits"]
-        # mask_pred = F.interpolate(
-        #     mask_pred,
-        #     size=(H, W),
-        #     mode="bilinear",
-        #     align_corners=False,
-        # )
-        # mask_cls = F.softmax(mask_cls, dim=-1)[..., :-1]
-        # mask_pred = mask_pred.sigmoid()
-        # pred = torch.einsum("bqc,bqhw->bchw", mask_cls.to(torch.float),
-        #                     mask_pred.to(torch.float))
+        _H, _W = logits.shape[2:]
+        if _H != H or _W != W:
+            # 确保输出大小与输入一致
+            pred = F.interpolate(
+                logits,
+                size=(H, W),
+                mode="bilinear",
+            )
 
         return pred

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tasks.segmentation.models.blocks.sample_blocks import FeatureFusionBlock, _make_scratch
+from tasks.segmentation.utils.LAMA import LAMA
 
 
 def _make_fusion_block(features, use_bn, size=None):
@@ -14,6 +15,59 @@ def _make_fusion_block(features, use_bn, size=None):
         align_corners=True,
         size=size,
     )
+
+
+class SampleAdapter(nn.Module):
+
+    def __init__(self, in_channels, out_channels=[256, 512, 1024, 1024]):
+        super(SampleAdapter, self).__init__()
+
+        # self.lama = LAMA(in_channels, 4)
+
+        self.projects = nn.ModuleList([
+            nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=out_channel,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+            ) for out_channel in out_channels
+        ])
+
+        self.resize_layers = nn.ModuleList([
+            nn.ConvTranspose2d(in_channels=out_channels[0],
+                               out_channels=out_channels[0],
+                               kernel_size=4,
+                               stride=4,
+                               padding=0),
+            nn.ConvTranspose2d(in_channels=out_channels[1],
+                               out_channels=out_channels[1],
+                               kernel_size=2,
+                               stride=2,
+                               padding=0),
+            nn.Identity(),
+            nn.Conv2d(in_channels=out_channels[3],
+                      out_channels=out_channels[3],
+                      kernel_size=3,
+                      stride=2,
+                      padding=1)
+        ])
+
+    def forward(self, out_features, patch_h, patch_w):
+        out = []
+        for i, x in enumerate(out_features):
+            # x = self.lama(x, (x.shape[0], x.shape[-1], patch_h, patch_w))
+            x = x.permute(0, 2, 1).reshape(
+                (x.shape[0], x.shape[-1], patch_h, patch_w))
+
+            x = self.projects[i](x)
+            x = self.resize_layers[i](x)
+
+            out.append(x)
+
+        # layer_1, layer_2, layer_3, layer_4 = out
+
+        return out
 
 
 class DPTHead(nn.Module):

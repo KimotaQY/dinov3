@@ -4,6 +4,14 @@ from .YYYJ_dataset import YYYJ_Dataset
 
 
 def build_dataset(dataset_name, data_type="test", **kwargs):
+    model_name = kwargs.get("model_name")
+    if model_name in ['DINOv3', 'SegDINO', 'Mask2Former']:
+        normalize_type = "geo"
+    elif model_name in ['MFNet']:
+        normalize_type = None
+    else:
+        normalize_type = "common"
+
     if dataset_name == "Potsdam":
         ids = ['4_10', '5_11', '2_11', '3_10', '6_11', '7_12'
                ] if data_type == "test" else [
@@ -19,20 +27,26 @@ def build_dataset(dataset_name, data_type="test", **kwargs):
                              label_dir=label_dir,
                              dataset_name=dataset_name,
                              data_type=data_type,
-                             window_size=kwargs.get("window_size", (224, 224)))
+                             window_size=kwargs.get("window_size", (224, 224)),
+                             normalize_type=normalize_type)
     elif dataset_name == "Vaihingen":
+        # ids = [5, 21, 15, 30] if data_type == "test" else [
+        #     1, 3, 23, 26, 7, 11, 13, 28, 17, 32, 34, 37
+        # ]
         ids = [5, 21, 15, 30] if data_type == "test" else [
             1, 3, 23, 26, 7, 11, 13, 28, 17, 32, 34, 37
         ]
         root_dir = "/home/yyyjvm/SS-datasets/ISPRS_dataset/"
         data_dir = root_dir + "Vaihingen/top/top_mosaic_09cm_area{}.tif"
-        label_dir = root_dir + "Vaihingen/gts_complete/top_mosaic_09cm_area{}.tif"
+        # label_dir = root_dir + "Vaihingen/gts_complete/top_mosaic_09cm_area{}.tif"
+        label_dir = root_dir + "Vaihingen/gts_eroded_for_participants/top_mosaic_09cm_area{}_noBoundary.tif"
         return ISRPS_Dataset(ids=ids,
                              data_dir=data_dir,
                              label_dir=label_dir,
                              dataset_name=dataset_name,
                              data_type=data_type,
-                             window_size=kwargs.get("window_size", (224, 224)))
+                             window_size=kwargs.get("window_size", (224, 224)),
+                             normalize_type=normalize_type)
     elif dataset_name == "YYYJ":
         train_dir = "/home/yyyjvm/SS-datasets/YYYJ_dataset/train"
         test_dir = "/home/yyyjvm/SS-datasets/YYYJ_dataset/test"
@@ -49,4 +63,5 @@ def build_dataset(dataset_name, data_type="test", **kwargs):
                             data_dir=data_dir,
                             label_dir=label_dir,
                             data_type=data_type,
-                            window_size=kwargs.get("window_size", (224, 224)))
+                            window_size=kwargs.get("window_size", (224, 224)),
+                            normalize_type=normalize_type)

@@ -2,6 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from utils.Net import FeatureReinforcementModule
+from utils.HaarFusion import Fusion as HaarFusion
+from utils.GCBAM import GCBAM
+from utils.PKIBlock import Poly_Kernel_Inception_Block
+from utils.CBAM import CBAM
+
 
 class ConvBNReLU(nn.Sequential):
 
@@ -148,22 +154,59 @@ class PRNDecoder(nn.Module):
             out_channels // 8,
         ]
 
-        self.neck = ProgressiveRefinementNeck(channels_list=in_channels,
+        # TODO: change the input channels
+        self.frm = FeatureReinforcementModule([in_channels[0]] + in_channels,
+                                              out_channels)
+
+        self.neck = ProgressiveRefinementNeck(channels_list=[out_channels] * 4,
                                               num_stages=1)
+
+        # self.gcbam0 = GCBAM(out_channels, group=1)
+        self.cbam = CBAM(out_channels)
+
+        # self.pki_block = Poly_Kernel_Inception_Block(out_channels,
+        #                                              out_channels)
+
+        # self.upsample = nn.Upsample(scale_factor=2)
 
         # self.conv2 = ConvBNReLU(out_channels, inner_channels[1], 3)
         # self.conv3 = ConvBNReLU(inner_channels[1], inner_channels[2], 3)
         # self.conv4 = ConvBNReLU(inner_channels[2], inner_channels[3], 3)
-        # self.conv5 = ConvBNReLU(inner_channels[3], n_classes, 1, pad=0)
+        # # self.conv5 = ConvBNReLU(inner_channels[3], n_classes, 1, pad=0)
 
         # self.fusion1 = HaarFusion(out_channels, wave='haar')
         # self.fusion2 = HaarFusion(inner_channels[1], wave='haar')
         # self.fusion3 = HaarFusion(inner_channels[2], wave='haar')
 
-        self.out_conv = ConvBNReLU(in_channels[0], n_classes, 1, pad=0)
+        # self.inter_conv2 = nn.Sequential(
+        #     nn.Conv2d(out_channels, inner_channels[1], 1),
+        #     # FrequencyChannelAttention(inner_channels[2]),
+        # )
+        # self.inter_conv3 = nn.Sequential(
+        #     nn.Conv2d(out_channels, inner_channels[2], 1),
+        #     # FrequencyChannelAttention(inner_channels[2]),
+        # )
+
+        self.out_conv = ConvBNReLU(out_channels, n_classes, 1, pad=0)
 
     def forward(self, features):
-        # features = self.frm(*features)
+        features = self.frm(*features)
+
+        # features = [self.pki_block(f) for f in features]
+
+        # features = [self.gcbam0(f) for f in features]
+        features = [self.cbam(f) for f in features]
+
+        p2, p3, p4 = self.neck(features)
+
+        # 提升输出结果分辨率
+        # x = self.fusion1(p3, p4)
+        # x = self.conv2(x)
+        # x = self.fusion2(self.inter_conv2(p2), x)
+        # x = self.conv3(x)
+        # x = self.conv4(self.inter_conv3(features[0]) + x)
+
+        # x = self.fusion3(x, self.conv4(features[-1]))
 
         # x = features[-1]
 
@@ -175,8 +218,9 @@ class PRNDecoder(nn.Module):
         # x = self.conv4(x)
 
         # return self.conv5(x)
-        p2, p3, p4 = self.neck(features)
-        return self.out_conv(p2)
+        x = p2
+
+        return self.out_conv(x)
 
 
 # 使用示例 - 严格对应论文描述
