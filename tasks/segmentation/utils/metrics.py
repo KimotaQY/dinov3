@@ -144,8 +144,8 @@ def metrics(predictions, gts, label_values):
     logger.info("F1Score :")
     for l_id, score in enumerate(F1Score):
         logger.info("%s: %.4f" % (label_values[l_id], score))
-    logger.info('mean F1Score: %.4f' %
-                (np.nanmean(F1Score[:(len(label_values) - 1)])))
+    F1Score = np.nanmean(F1Score[:(len(label_values) - 1)])
+    logger.info('mean F1Score: %.4f' % (F1Score))
     logger.info("---")
 
     # Compute kappa coefficient
@@ -163,4 +163,4 @@ def metrics(predictions, gts, label_values):
     logger.info('mean MIoU: %.4f' % (MIoU))
     logger.info("---")
 
-    return MIoU
+    return MIoU, F1Score, kappa, accuracy
