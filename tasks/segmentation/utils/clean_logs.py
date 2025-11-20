@@ -5,6 +5,10 @@ import shutil
 
 
 def clean_logs(log_dir, min_cktp_num: int = 0):
+    # 判断log_dir是否存在
+    if not os.path.exists(log_dir):
+        print(f"{log_dir} does not exist.")
+        return
     # 获取目录下的所有文件夹
     dirs = [
         d for d in os.listdir(log_dir)
@@ -26,4 +30,4 @@ def clean_logs(log_dir, min_cktp_num: int = 0):
 
 if __name__ == "__main__":
     log_dir = "/home/yyyjvm/SS-projects/dinov3/tasks/segmentation/logs"
-    clean_logs(log_dir, 1)
+    clean_logs(log_dir, 2)
