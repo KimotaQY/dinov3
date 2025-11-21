@@ -6,6 +6,7 @@ from .Mask2Former import get_cfg as get_Mask2Former_cfg
 from .UNetFormer import get_cfg as get_UNetFormer_cfg
 from .FTUNetFormer import get_cfg as get_FTUNetFormer_cfg
 from .RS3Mamba import get_cfg as get_RS3Mamba_cfg
+from .CMTFNet import get_cfg as get_CMTFNet_cfg
 
 
 def get_cfg(model_name=None, dataset_name=None):
@@ -30,6 +31,8 @@ def get_cfg(model_name=None, dataset_name=None):
         cfg = get_FTUNetFormer_cfg(dataset_name)
     elif model_name == 'RS3Mamba':
         cfg = get_RS3Mamba_cfg(dataset_name)
+    elif model_name == 'CMTFNet':
+        cfg = get_CMTFNet_cfg(dataset_name)
     else:
         raise ValueError("Model name is not supported")
 
