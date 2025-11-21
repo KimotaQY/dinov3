@@ -159,6 +159,9 @@ def metrics(predictions, gts, label_values):
     MIoU = np.diag(cm) / (np.sum(cm, axis=1) + np.sum(cm, axis=0) -
                           np.diag(cm))
     print(MIoU)
+    logger.info("MIoU: ")
+    for l_id, score in enumerate(MIoU):
+        logger.info("%s: %.4f" % (label_values[l_id], score))
     MIoU = np.nanmean(MIoU[:(len(label_values) - 1)])
     logger.info('mean MIoU: %.4f' % (MIoU))
     logger.info("---")
