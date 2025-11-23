@@ -26,9 +26,9 @@ def get_cfg(dataset_name=None):
         local_model_dir=
         "/home/yyyjvm/Checkpoints/timm/resnet18.fb_swsl_ig1b_ft_in1k")
 
-    # model = load_pretrained_ckpt(
-    #     model,
-    #     ckpt_path="/home/yyyjvm/Checkpoints/RS3Mamba/vmamba_tiny_e292.pth")
+    model = load_pretrained_ckpt(
+        model,
+        ckpt_path="/home/yyyjvm/Checkpoints/RS3Mamba/vmamba_tiny_e292.pth")
 
     # 根据GPU数量调整学习率
     if distributed.is_enabled():

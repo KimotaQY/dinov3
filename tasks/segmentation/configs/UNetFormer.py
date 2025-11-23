@@ -13,9 +13,9 @@ def get_cfg(dataset_name=None):
         raise ValueError("Dataset name must be specified")
 
     base_lr = 6e-4
-    batch_size = 8
-    epochs = 105
-    window_size = (1024, 1024)
+    batch_size = 16
+    epochs = 100
+    window_size = (512, 512)
     labels = get_labels(dataset_name)
     ignore_index = len(labels)
     loss_fn = JointLoss(

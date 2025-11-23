@@ -2,7 +2,7 @@ import torch.optim as optim
 
 from losses import *
 from .common_cfg import *
-from models.dino_segment import DINOSegment
+from tasks.segmentation.models.My_DINO.dino_segment import DINOSegment
 
 # 导入分布式训练相关模块
 import dinov3.distributed as distributed
@@ -12,7 +12,7 @@ def get_cfg(dataset_name=None):
     if dataset_name is None:
         raise ValueError("Dataset name must be specified")
 
-    base_lr = 1e-4
+    base_lr = 2e-4
     batch_size = 8
     epochs = 50
     window_size = (512, 512)
@@ -26,7 +26,8 @@ def get_cfg(dataset_name=None):
     backbone_weights = "/home/yyyjvm/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
     model = DINOSegment(backbone_weights=backbone_weights,
                         n_classes=len(labels),
-                        window_size=window_size)
+                        window_size=window_size,
+                        use_lora=False)
 
     # 根据GPU数量调整学习率
     if distributed.is_enabled():
@@ -53,8 +54,8 @@ def get_cfg(dataset_name=None):
     param_groups = [
         {
             'params': backbone_params,
-            'lr': base_lr * 0.1
-        },  # backbone使用较小的学习率
+            'lr': base_lr * 1
+        },
         {
             'params': other_params,
             'lr': base_lr

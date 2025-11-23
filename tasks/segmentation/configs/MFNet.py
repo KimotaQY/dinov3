@@ -13,7 +13,7 @@ def get_cfg(dataset_name=None):
         raise ValueError("Dataset name must be specified")
 
     base_lr = 0.01
-    batch_size = 32
+    batch_size = 10
     epochs = 50
     window_size = (256, 256)
     labels = get_labels(dataset_name)
