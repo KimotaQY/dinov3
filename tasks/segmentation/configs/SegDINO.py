@@ -1,4 +1,5 @@
 import torch.optim as optim
+import torch.nn as nn
 
 from losses import *
 from .common_cfg import *
@@ -14,16 +15,14 @@ def get_cfg(dataset_name=None):
         raise ValueError("Dataset name must be specified")
 
     base_lr = 1e-4
-    batch_size = 8
+    batch_size = 4
     epochs = 50
-    window_size = (512, 512)
+    window_size = (256, 256)
     labels = get_labels(dataset_name)
     ignore_index = len(labels)
-    loss_fn = JointLoss(
-        SoftCrossEntropyLoss(smooth_factor=0.05, ignore_index=ignore_index),
-        DiceLoss(smooth=0.05, ignore_index=ignore_index), 1.0, 1.0)
+    loss_fn = SoftCrossEntropyLoss(ignore_index=ignore_index)
 
-    backbone_weights = "/home/yyyjvm/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
+    backbone_weights = "/home/yyyj/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
 
     if backbone_weights is not None:
         backbone = dinov3_vitl16(weights=backbone_weights, pretrained=True)
