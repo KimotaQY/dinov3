@@ -18,7 +18,7 @@ import torchvision.transforms.functional as F
 #     return img_a, img_b
 
 
-def resize(img_a, mask=None, ratio_range=(0.5, 2.0)):
+def resize(img_a, mask=None, dsm=None, ratio_range=(0.5, 2.0)):
     w, h = img_a.size
     long_side = random.randint(int(max(h, w) * ratio_range[0]),
                                int(max(h, w) * ratio_range[1]))
@@ -33,11 +33,13 @@ def resize(img_a, mask=None, ratio_range=(0.5, 2.0)):
     img_a = img_a.resize((ow, oh), Image.BILINEAR)
     if mask is not None:
         mask = mask.resize((ow, oh), Image.NEAREST)
+    if dsm is not None:
+        dsm = dsm.resize((ow, oh), Image.BILINEAR)
 
-    return img_a, mask
+    return img_a, mask, dsm
 
 
-def crop(img_a, mask, size, ignore_value=0):
+def crop(img_a, mask, dsm, size, ignore_value=0):
     w, h = img_a.size
     padw = size - w if w < size else 0
     padh = size - h if h < size else 0
@@ -46,6 +48,10 @@ def crop(img_a, mask, size, ignore_value=0):
         mask = ImageOps.expand(mask,
                                border=(0, 0, padw, padh),
                                fill=ignore_value)
+    if dsm is not None:
+        dsm = ImageOps.expand(dsm,
+                              border=(0, 0, padw, padh),
+                              fill=ignore_value)
 
     w, h = img_a.size
     x = random.randint(0, w - size)
@@ -53,24 +59,30 @@ def crop(img_a, mask, size, ignore_value=0):
     img_a = img_a.crop((x, y, x + size, y + size))
     if mask is not None:
         mask = mask.crop((x, y, x + size, y + size))
+    if dsm is not None:
+        dsm = dsm.crop((x, y, x + size, y + size))
 
-    return img_a, mask
+    return img_a, mask, dsm
 
 
-def hflip(img_a, mask, p=0.5):
+def hflip(img_a, mask, dsm, p=0.5):
     if random.random() < p:
         img_a = transforms.functional.hflip(img_a)
         if mask is not None:
             mask = transforms.functional.hflip(mask)
-    return img_a, mask
+        if dsm is not None:
+            dsm = transforms.functional.hflip(dsm)
+    return img_a, mask, dsm
 
 
-def vflip(img_a, mask, p=0.5):
+def vflip(img_a, mask, dsm, p=0.5):
     if random.random() < p:
         img_a = transforms.functional.vflip(img_a)
         if mask is not None:
             mask = transforms.functional.vflip(mask)
-    return img_a, mask
+        if dsm is not None:
+            dsm = transforms.functional.vflip(dsm)
+    return img_a, mask, dsm
 
 
 def rotate(img_a, mask, p=0.5):

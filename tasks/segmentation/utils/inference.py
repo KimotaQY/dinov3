@@ -93,13 +93,14 @@ def make_inference(
 
 
 def slide_inference(
-        inputs: torch.Tensor,
-        segmentation_model: nn.Module,
-        decoder_head_type: str = "linear",
-        n_output_channels: int = 256,
-        crop_size: Tuple = (512, 512),
-        stride: Tuple = (341, 341),
-        num_max_forward: int = 1,
+    inputs: torch.Tensor,
+    segmentation_model: nn.Module,
+    decoder_head_type: str = "linear",
+    n_output_channels: int = 256,
+    crop_size: Tuple = (512, 512),
+    stride: Tuple = (341, 341),
+    num_max_forward: int = 1,
+    dsm: torch.Tensor = None,
 ):
     """Inference by sliding-window with overlap.
     If h_crop > h_img or w_crop > w_img, the small patch will be used to
@@ -132,8 +133,13 @@ def slide_inference(
             x2 = min(x1 + w_crop, w_img)
             y1 = max(y2 - h_crop, 0)
             x1 = max(x2 - w_crop, 0)
-            crop_img = inputs[:, :, y1:y2, x1:x2]
-            crop_pred = segmentation_model(crop_img)
+            if dsm is not None:
+                crop_img = inputs[:, :, y1:y2, x1:x2]
+                crop_pred = segmentation_model(crop_img, dsm[:, :, y1:y2,
+                                                             x1:x2])
+            else:
+                crop_img = inputs[:, :, y1:y2, x1:x2]
+                crop_pred = segmentation_model(crop_img)
             if decoder_head_type == "m2f":
                 mask_pred, mask_cls = crop_pred["pred_masks"], crop_pred[
                     "pred_logits"]
