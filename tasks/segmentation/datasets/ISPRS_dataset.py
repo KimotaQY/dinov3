@@ -1,3 +1,4 @@
+import io
 import os
 import random
 import sys
@@ -26,14 +27,17 @@ invert_palette = {v: k for k, v in palette.items()}
 
 class ISRPS_Dataset(torch.utils.data.Dataset):
 
-    def __init__(self,
-                 ids,
-                 data_dir,
-                 label_dir,
-                 dataset_name,
-                 data_type,
-                 window_size=(224, 224),
-                 normalize_type=None):
+    def __init__(
+            self,
+            ids,
+            data_dir,
+            label_dir,
+            dataset_name,
+            data_type,
+            window_size=(224, 224),
+            normalize_type=None,
+            dsm_dir=None,
+    ):
         super(ISRPS_Dataset, self).__init__()
 
         self.dataset_name = dataset_name
@@ -43,15 +47,18 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
         # List of files
         self.data_files = [data_dir.format(id) for id in ids]
         self.label_files = [label_dir.format(id) for id in ids]
+        self.dsm_files = [dsm_dir.format(id)
+                          for id in ids] if dsm_dir is not None else []
 
         # Sanity check : raise an error if some files do not exist
-        for file in self.data_files + self.label_files:
+        for file in self.data_files + self.label_files + self.dsm_files:
             if not os.path.exists(file) and not os.path.isfile(file):
                 raise ValueError(f"File {file} does not exist")
 
         # Initialize cache dicts
         self.data_cache = {}
         self.label_cache = {}
+        self.dsm_cache = {}
 
         if normalize_type == "geo":
             self.imagenet_mean = (0.430, 0.411, 0.296)
@@ -93,21 +100,31 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
 
                 self.label_cache[random_idx] = label
 
+            dsm = None
+            if random_idx in self.dsm_cache.keys():
+                dsm = self.dsm_cache[random_idx]
+            elif len(self.dsm_files) > 0:
+                dsm = Image.open(self.dsm_files[random_idx])
+
+                self.dsm_cache[random_idx] = dsm
+
             # Get a random patch
             x1, x2, y1, y2 = self.get_random_pos(data, self.window_size)
             if isinstance(data, np.ndarray):
                 data = data[:, x1:x2, y1:y2]
                 label = label[x1:x2, y1:y2]
+                dsm = dsm[x1:x2, y1:y2] if dsm is not None else None
             elif isinstance(data, Image.Image):
                 data = data.crop(
                     (y1, x1, y2, x2))  # PIL使用(left, upper, right, lower)
                 label = label.crop((y1, x1, y2, x2))
+                dsm = dsm.crop((y1, x1, y2, x2)) if dsm is not None else None
 
             # 弱增强
-            data, label = resize(data, label, (0.5, 2.0))
-            data, label = crop(data, label, self.window_size[0])
-            data, label = hflip(data, label, p=0.5)
-            data, label = vflip(data, label, p=0.5)
+            data, label, dsm = resize(data, label, dsm, ratio_range=(0.5, 2.0))
+            data, label, dsm = crop(data, label, dsm, size=self.window_size[0])
+            data, label, dsm = hflip(data, label, dsm, p=0.5)
+            data, label, dsm = vflip(data, label, dsm, p=0.5)
             # data, label = rotate(data, label, p=0.5)
 
             # data = color_jitter(data, p=0.8)
@@ -127,13 +144,29 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
             label = np.asarray(self.convert_from_color(label_arr),
                                dtype='int64')
 
+            dsm = Image.open(self.dsm_files[idx]) if len(
+                self.dsm_files) > 0 else None
+
         data = TF.to_tensor(data)  # Convert image to tensor
         if self.imagenet_mean is not None:
             data = TF.normalize(
                 data, self.imagenet_mean,
                 self.imagenet_std)  # Normalize with ImageNet mean and std
 
-        return data, label
+        if dsm is not None:
+            min_val, max_val = dsm.getextrema()
+            # 防止除零错误
+            if max_val > min_val:
+                dsm = Image.eval(dsm, lambda x: (x - min_val) /
+                                 (max_val - min_val))
+            else:
+                # 如果所有像素值都相同，则将它们设置为min_val
+                dsm = Image.eval(dsm, lambda x: min_val)
+            dsm = TF.to_tensor(dsm)
+
+            return data, dsm, label
+        else:
+            return data, label
 
     @staticmethod
     def convert_from_color(arr_3d, palette=invert_palette):
