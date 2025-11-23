@@ -6,15 +6,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from transformers import AutoImageProcessor, AutoModel
-from transformers.image_utils import load_image
 
 from .linear_decoder import LinearHead
 from .fpn_decoder import FPNDecoder
 from .prn_decoder import PRNDecoder
-from .backbone.dinov3_adapter import DINOv3_Adapter
-from .backbone.sample_adapter import SampleAdapter
-from .heads.mask2former_head import Mask2FormerHead
-from .heads.pixel_decoder import MSDeformAttnPixelDecoder
+from .sample_adapter import SampleAdapter
 from .lora import LoRA
 
 # 添加项目根目录到 Python 路径中，以便可以导入 dinov3 模块
@@ -73,51 +69,13 @@ class DINOSegment(nn.Module):
         #     self.backbone,
         #     interaction_indexes=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"],
         # )
-
         # 更简单的adapter
-        self.adapter = SampleAdapter(embed_dim, [256] * 4)
+        self.adapter = SampleAdapter(embed_dim)
 
-        # self.decoder = Mask2FormerHead(
-        #     input_shape={
-        #         "1": [embed_dim, patch_size * 4, patch_size * 4, 4],
-        #         "2": [embed_dim, patch_size * 2, patch_size * 2, 4],
-        #         "3": [embed_dim, patch_size, patch_size, 4],
-        #         "4": [embed_dim,
-        #               int(patch_size / 2),
-        #               int(patch_size / 2), 4],
-        #     },
-        #     hidden_dim=hidden_dim,
-        #     num_classes=n_classes,
-        #     ignore_value=255,
-        # )
-        # self.pixel_decoder = MSDeformAttnPixelDecoder(
-        #     input_shape={
-        #         "1": [embed_dim, patch_size * 4, patch_size * 4, 4],
-        #         "2": [embed_dim, patch_size * 2, patch_size * 2, 4],
-        #         "3": [embed_dim, patch_size, patch_size, 4],
-        #         "4": [embed_dim,
-        #               int(patch_size / 2),
-        #               int(patch_size / 2), 4],
-        #     },
-        #     transformer_dropout=0.0,
-        #     transformer_nheads=16,
-        #     transformer_dim_feedforward=4096,
-        #     transformer_enc_layers=6,
-        #     conv_dim=hidden_dim,
-        #     mask_dim=hidden_dim,
-        #     norm="GN",
-        #     transformer_in_features=["1", "2", "3", "4"],
-        #     common_stride=4,
-        # )
-        self.decoder = PRNDecoder(in_channels=[256] * 4,
-                                  out_channels=256,
-                                  n_classes=n_classes)
-        # self.fpn = FPNDecoder(in_channels=embed_dim,
+        self.decoder = PRNDecoder(n_classes=n_classes)
+        # self.decoder = FPNDecoder(in_channels=embed_dim,
         #                       out_channels=256,
         #                       n_classes=n_classes)
-        # for param in self.decoder.parameters():
-        #     param.requires_grad = True
-
         # self.decoder = LinearHead(in_ch=embed_dim, n_classes=n_classes)
         # Add LoRA layers to the encoder
         self.use_lora = use_lora
@@ -158,37 +116,47 @@ class DINOSegment(nn.Module):
         for w_b in self.w_b:
             nn.init.zeros_(w_b.weight)
 
-    def forward(self, inputs):
-        _, _, H, W = inputs.shape
-        patch_h, patch_w = inputs.shape[-2] // 16, inputs.shape[-1] // 16
+    def forward(self, x, y=None):
+        _, _, H, W = x.shape
+        patch_h, patch_w = x.shape[-2] // 16, x.shape[-1] // 16
 
-        # inputs = self.processor(inputs, return_tensors="pt")
+        if y is None:
+            # 使用DINOv3_Adapter时
+            # outputs = self.backbone.forward(inputs.data['pixel_values'])
+            # 多尺度特征
+            # multi_scale_features = [
+            #     outputs["1"],  # 高分辨率特征
+            #     outputs["2"],
+            #     outputs["3"],
+            #     outputs["4"]  # 低分辨率特征
+            # ]
 
-        # 使用DINOv3_Adapter时
-        # outputs = self.backbone.forward(inputs.data['pixel_values'])
-        # 多尺度特征
-        # multi_scale_features = [
-        #     outputs["1"],  # 高分辨率特征
-        #     outputs["2"],
-        #     outputs["3"],
-        #     outputs["4"]  # 低分辨率特征
-        # ]
+            # 使用SampleAdapter时
+            outputs = self.backbone.get_intermediate_layers(
+                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
 
-        # 使用SampleAdapter时
-        outputs = self.backbone.get_intermediate_layers(
-            # inputs.data['pixel_values'],
-            inputs,
-            n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
+            multi_scale_features = self.adapter(outputs, patch_h, patch_w)
 
-        multi_scale_features = self.adapter(outputs, patch_h, patch_w)
+            logits = self.decoder(multi_scale_features)
 
-        # logits = self.fpn(multi_scale_features)
-        logits = self.decoder(multi_scale_features)
+            # pixel_decoder + fpn
+            # _, _, multi_scale_features = self.pixel_decoder.forward_features(
+            #     outputs)
+            # logits = self.fpn(multi_scale_features[::-1])
+        else:
+            y = y.repeat(
+                1, 3, 1, 1
+            )  # (batch_size, 1, height, width) → (batch_size, 3, height, width)
+            outputs_x = self.backbone.get_intermediate_layers(
+                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
+            outputs_y = self.backbone.get_intermediate_layers(
+                y, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
 
-        # pixel_decoder + fpn
-        # _, _, multi_scale_features = self.pixel_decoder.forward_features(
-        #     outputs)
-        # logits = self.fpn(multi_scale_features[::-1])
+            multi_scale_features_x = self.adapter(outputs_x, patch_h, patch_w)
+            multi_scale_features_y = self.adapter(outputs_y, patch_h, patch_w)
+
+            logits = self.decoder(multi_scale_features_x,
+                                  multi_scale_features_y)
 
         _H, _W = logits.shape[2:]
         if _H != H or _W != W:

@@ -32,6 +32,42 @@ class ConvBNReLU(nn.Sequential):
         super().__init__(*layers)
 
 
+class SqueezeAndExcitation(nn.Module):
+
+    def __init__(self,
+                 channel,
+                 reduction=16,
+                 activation=nn.ReLU(inplace=True)):
+        super(SqueezeAndExcitation, self).__init__()
+        self.fc = nn.Sequential(
+            nn.Conv2d(channel, channel // reduction,
+                      kernel_size=1), activation,
+            nn.Conv2d(channel // reduction, channel, kernel_size=1),
+            nn.Sigmoid())
+
+    def forward(self, x):
+        weighting = F.adaptive_avg_pool2d(x, 1)
+        weighting = self.fc(weighting)
+        y = x * weighting
+        return y
+
+
+class SEFusion(nn.Module):
+
+    def __init__(self, channels_in, activation=nn.ReLU(inplace=True)):
+        super(SEFusion, self).__init__()
+
+        self.se_rgb = SqueezeAndExcitation(channels_in, activation=activation)
+        self.se_depth = SqueezeAndExcitation(channels_in,
+                                             activation=activation)
+
+    def forward(self, rgb, depth):
+        rgb = self.se_rgb(rgb)
+        depth = self.se_depth(depth)
+        out = rgb + depth
+        return out
+
+
 class ProgressiveRefinementNeck(nn.Module):
 
     def __init__(self, channels_list, num_stages=1):
@@ -140,7 +176,12 @@ class ProgressiveRefinementNeck(nn.Module):
 
 class PRNDecoder(nn.Module):
 
-    def __init__(self, in_channels, out_channels, n_classes):
+    def __init__(
+        self,
+        n_classes,
+        in_channels=[256, 512, 1024, 1024],
+        out_channels=256,
+    ):
         super().__init__()
 
         self.in_channels = in_channels  # 1024
@@ -158,11 +199,16 @@ class PRNDecoder(nn.Module):
         self.frm = FeatureReinforcementModule([in_channels[0]] + in_channels,
                                               out_channels)
 
+        self.fusion1 = SEFusion(out_channels)
+        self.fusion2 = SEFusion(out_channels)
+        self.fusion3 = SEFusion(out_channels)
+        self.fusion4 = SEFusion(out_channels)
+
         self.neck = ProgressiveRefinementNeck(channels_list=[out_channels] * 4,
                                               num_stages=1)
 
         # self.gcbam0 = GCBAM(out_channels, group=1)
-        self.cbam = CBAM(out_channels)
+        # self.cbam = CBAM(out_channels)
 
         # self.pki_block = Poly_Kernel_Inception_Block(out_channels,
         #                                              out_channels)
@@ -189,15 +235,28 @@ class PRNDecoder(nn.Module):
 
         self.out_conv = ConvBNReLU(out_channels, n_classes, 1, pad=0)
 
-    def forward(self, features):
-        features = self.frm(*features)
+    def forward(self, x, y=None):
+        if y is None:
+            features = self.frm(*x)
 
-        # features = [self.pki_block(f) for f in features]
+            p2, p3, p4 = self.neck(features)
+        else:
+            x2, x3, x4, x5 = self.frm(*x)
+            y2, y3, y4, y5 = self.frm(*y)
 
-        # features = [self.gcbam0(f) for f in features]
-        features = [self.cbam(f) for f in features]
+            ff1 = self.fusion1(x2, y2)
+            ff2 = self.fusion2(x3, y3)
+            ff3 = self.fusion3(x4, y4)
+            ff4 = self.fusion4(x5, y5)
 
-        p2, p3, p4 = self.neck(features)
+            features = (ff1, ff2, ff3, ff4)
+
+            # features = [self.pki_block(f) for f in features]
+
+            # features = [self.gcbam0(f) for f in features]
+            # features = [self.cbam(f) for f in features]
+
+            p2, p3, p4 = self.neck(features)
 
         # 提升输出结果分辨率
         # x = self.fusion1(p3, p4)
@@ -218,9 +277,7 @@ class PRNDecoder(nn.Module):
         # x = self.conv4(x)
 
         # return self.conv5(x)
-        x = p2
-
-        return self.out_conv(x)
+        return self.out_conv(p2)
 
 
 # 使用示例 - 严格对应论文描述

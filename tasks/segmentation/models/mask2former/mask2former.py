@@ -15,7 +15,7 @@ if project_root not in sys.path:
 
 from dinov3.hub.backbones import dinov3_vitl16
 from dinov3.eval.segmentation.models.heads.mask2former_head import Mask2FormerHead
-from dinov3.eval.segmentation.models.backbone.dinov3_adapter import DINOv3_Adapter
+from .dinov3_adapter import DINOv3_Adapter
 
 BACKBONE_INTERMEDIATE_LAYERS = {
     "dinov3_vits16": [2, 5, 8, 11],

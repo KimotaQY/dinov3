@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from tasks.segmentation.models.blocks.sample_blocks import FeatureFusionBlock, _make_scratch
+from tasks.segmentation.models.My_DINO.sample_blocks import FeatureFusionBlock, _make_scratch
 from tasks.segmentation.utils.LAMA import LAMA
 
 

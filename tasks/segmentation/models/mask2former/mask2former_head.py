@@ -9,8 +9,8 @@ from typing import Dict, Tuple
 from torch import nn
 from torch.nn import functional as F
 
-from tasks.segmentation.models.heads.pixel_decoder import MSDeformAttnPixelDecoder
-from tasks.segmentation.models.heads.mask2former_transformer_decoder import MultiScaleMaskedTransformerDecoder
+from tasks.segmentation.models.mask2former.pixel_decoder import MSDeformAttnPixelDecoder
+from tasks.segmentation.models.mask2former.mask2former_transformer_decoder import MultiScaleMaskedTransformerDecoder
 
 
 class Mask2FormerHead(nn.Module):

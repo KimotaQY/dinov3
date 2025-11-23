@@ -10,15 +10,16 @@ from .fpn_decoder import FPNDecoder
 
 
 class DINOSegment(nn.Module):
+
     def __init__(
-        self,
-        encoder,
-        r: int = 3,
-        emb_dim: int = 1024,
-        n_classes: int = 1000,
-        use_lora: bool = False,
-        use_fpn: bool = False,
-        img_dim: tuple[int, int] = (520, 520),
+            self,
+            encoder,
+            r: int = 3,
+            emb_dim: int = 1024,
+            n_classes: int = 1000,
+            use_lora: bool = False,
+            use_fpn: bool = False,
+            img_dim: tuple[int, int] = (520, 520),
     ):
         """The DINOv2 encoder-decoder model for finetuning to downstream tasks.
 
@@ -34,7 +35,8 @@ class DINOSegment(nn.Module):
                 (520, 520).
         """
         super().__init__()
-        assert img_dim[0] % encoder.patch_size == 0, "Wrong input shape for patches"
+        assert img_dim[
+            0] % encoder.patch_size == 0, "Wrong input shape for patches"
         assert r > 0
 
         self.emb_dim = emb_dim
@@ -112,9 +114,9 @@ class DINOSegment(nn.Module):
         # our decoder to get a better segmentation result.
         if self.use_fpn:
             # Potentially even better to take a different depths
-            feature = self.encoder.get_intermediate_layers(
-                x, n=self.inter_layers, reshape=True
-            )
+            feature = self.encoder.get_intermediate_layers(x,
+                                                           n=self.inter_layers,
+                                                           reshape=True)
             logits = self.decoder(feature)
 
         else:
@@ -140,8 +142,14 @@ class DINOSegment(nn.Module):
         """
         w_a, w_b = {}, {}
         if self.use_lora:
-            w_a = {f"w_a_{i:03d}": self.w_a[i].weight for i in range(len(self.w_a))}
-            w_b = {f"w_b_{i:03d}": self.w_b[i].weight for i in range(len(self.w_a))}
+            w_a = {
+                f"w_a_{i:03d}": self.w_a[i].weight
+                for i in range(len(self.w_a))
+            }
+            w_b = {
+                f"w_b_{i:03d}": self.w_b[i].weight
+                for i in range(len(self.w_a))
+            }
 
         decoder_weights = self.decoder.state_dict()
         torch.save({**w_a, **w_b, **decoder_weights}, filename)
