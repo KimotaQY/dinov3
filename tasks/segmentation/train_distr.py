@@ -259,7 +259,7 @@ def train(model,
                     model, 'module') else model.state_dict()
                 torch.save({
                     "model": model_state
-                }, f"{save_dir}/dinoseg_{DATASET_NAME}_e{e}_mIoU{round(mIoU*100, 2)}.pth"
+                }, f"{save_dir}/{MODEL_NAME}_{DATASET_NAME}_e{e}_mIoU{round(mIoU*100, 2)}.pth"
                            )
 
             # 记录测试指标到JSON文件
