@@ -291,7 +291,7 @@ class Embeddings(nn.Module):
         self.dropout = Dropout(config.transformer["dropout_rate"])
 
     def forward(self, x, y):
-        y = y.unsqueeze(1)
+        # y = y.unsqueeze(1)
         if self.hybrid:
             x, y, features = self.hybrid_model(x, y)
         else:
