@@ -24,46 +24,31 @@ def get_cfg(dataset_name=None):
     model = RS3Mamba(
         num_classes=len(labels),
         local_model_dir=
-        "/home/yyyjvm/Checkpoints/timm/resnet18.fb_swsl_ig1b_ft_in1k")
+        "/home/yyyj/Checkpoints/timm/resnet18.fb_swsl_ig1b_ft_in1k")
 
     model = load_pretrained_ckpt(
         model,
-        ckpt_path="/home/yyyjvm/Checkpoints/RS3Mamba/vmamba_tiny_e292.pth")
+        ckpt_path="/home/yyyj/Checkpoints/RS3Mamba/vmamba_tiny_e292.pth")
 
     # 根据GPU数量调整学习率
     if distributed.is_enabled():
         base_lr = base_lr * distributed.get_world_size()
 
-    # 分别为backbone和其他部分设置不同的学习率
-    backbone_params = []
-    other_params = []
+    params_dict = dict(model.named_parameters())
+    params = []
+    for key, value in params_dict.items():
+        if '_D' in key:
+            # Decoder weights are trained at the nominal learning rate
+            params += [{'params': [value], 'lr': base_lr}]
+        else:
+            # Encoder weights are trained at lr / 2 (we have VGG-16 weights as initialization)
+            params += [{'params': [value], 'lr': base_lr / 2}]
 
-    # 如果backbone中有需要训练的参数（如LoRA参数）
-    if hasattr(model, 'backbone'):
-        backbone_params = [
-            p for p in model.backbone.parameters() if p.requires_grad
-        ]
-
-    # 其他所有需要训练的参数
-    other_params = []
-    for name, param in model.named_parameters():
-        # 排除backbone中的参数，剩下的都是其他参数
-        if not name.startswith('backbone') and param.requires_grad:
-            other_params.append(param)
-
-    # 为不同部分设置不同的学习率
-    param_groups = [
-        {
-            'params': backbone_params,
-            'lr': base_lr * 1
-        },  # backbone使用较小的学习率
-        {
-            'params': other_params,
-            'lr': base_lr
-        }  # 其他部分使用正常学习率
-    ]
-
-    optimizer = optim.SGD(param_groups, momentum=0.9, weight_decay=0.0005)
+    optimizer = optim.SGD(model.parameters(),
+                          lr=base_lr,
+                          momentum=0.9,
+                          weight_decay=0.0005)
+    # We define the scheduler
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, [25, 35, 45],
                                                gamma=0.1)
 
