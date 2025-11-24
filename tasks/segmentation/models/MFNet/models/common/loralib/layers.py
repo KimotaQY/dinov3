@@ -11,10 +11,11 @@ import torch.nn.functional as F
 
 
 class LoRALayer():
+
     def __init__(
-        self, 
-        r: int, 
-        lora_alpha: int, 
+        self,
+        r: int,
+        lora_alpha: int,
         lora_dropout: float,
         merge_weights: bool,
     ):
@@ -32,22 +33,25 @@ class LoRALayer():
 
 class Embedding(nn.Embedding, LoRALayer):
     # LoRA implemented in a dense layer
-    def __init__(
-        self,
-        num_embeddings: int,
-        embedding_dim: int,
-        r: int = 0,
-        lora_alpha: int = 1,
-        merge_weights: bool = True,
-        **kwargs
-    ):
+    def __init__(self,
+                 num_embeddings: int,
+                 embedding_dim: int,
+                 r: int = 0,
+                 lora_alpha: int = 1,
+                 merge_weights: bool = True,
+                 **kwargs):
         nn.Embedding.__init__(self, num_embeddings, embedding_dim, **kwargs)
-        LoRALayer.__init__(self, r=r, lora_alpha=lora_alpha, lora_dropout=0,
+        LoRALayer.__init__(self,
+                           r=r,
+                           lora_alpha=lora_alpha,
+                           lora_dropout=0,
                            merge_weights=merge_weights)
         # Actual trainable parameters
         if r > 0:
-            self.lora_A = nn.Parameter(self.weight.new_zeros((r, num_embeddings)))
-            self.lora_B = nn.Parameter(self.weight.new_zeros((embedding_dim, r)))
+            self.lora_A = nn.Parameter(
+                self.weight.new_zeros((r, num_embeddings)))
+            self.lora_B = nn.Parameter(
+                self.weight.new_zeros((embedding_dim, r)))
             self.scaling = self.lora_alpha / self.r
             # Freezing the pre-trained weight matrix
             self.weight.requires_grad = False
@@ -65,9 +69,10 @@ class Embedding(nn.Embedding, LoRALayer):
         if self.merge_weights and self.merged:
             # Make sure that the weights are not merged
             if self.r > 0:
-                self.weight.data -= (self.lora_B @ self.lora_A).T * self.scaling
+                self.weight.data -= (
+                    self.lora_B @ self.lora_A).T * self.scaling
             self.merged = False
-    
+
     def eval(self):
         nn.Linear.eval(self)
         if self.merge_weights and not self.merged:
@@ -80,46 +85,54 @@ class Embedding(nn.Embedding, LoRALayer):
         if self.r > 0 and not self.merged:
             result = nn.Embedding.forward(self, x)
             if self.r > 0:
-                after_A = F.embedding(
-                    x, self.lora_A.T, self.padding_idx, self.max_norm,
-                    self.norm_type, self.scale_grad_by_freq, self.sparse
-                )
+                after_A = F.embedding(x, self.lora_A.T, self.padding_idx,
+                                      self.max_norm, self.norm_type,
+                                      self.scale_grad_by_freq, self.sparse)
                 result += (after_A @ self.lora_B.T) * self.scaling
             return result
         else:
             return nn.Embedding.forward(self, x)
-            
+
 
 class Linear(nn.Linear, LoRALayer):
     # LoRA implemented in a dense layer
     def __init__(
-        self, 
-        in_features: int, 
-        out_features: int, 
-        r: int = 0, 
-        lora_alpha: int = 1, 
-        lora_dropout: float = 0.,
-        fan_in_fan_out: bool = False, # Set this to True if the layer to replace stores weight like (fan_in, fan_out)
-        merge_weights: bool = True,
-        **kwargs
-    ):
+            self,
+            in_features: int,
+            out_features: int,
+            r: int = 0,
+            lora_alpha: int = 1,
+            lora_dropout: float = 0.,
+            fan_in_fan_out:
+        bool = False,  # Set this to True if the layer to replace stores weight like (fan_in, fan_out)
+            merge_weights: bool = True,
+            **kwargs):
         nn.Linear.__init__(self, in_features, out_features, **kwargs)
-        LoRALayer.__init__(self, r=r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
+        LoRALayer.__init__(self,
+                           r=r,
+                           lora_alpha=lora_alpha,
+                           lora_dropout=lora_dropout,
                            merge_weights=merge_weights)
 
         self.fan_in_fan_out = fan_in_fan_out
         # Actual trainable parameters
         if r > 0:
-            self.lora_Ax = nn.Parameter(self.weight.new_zeros((r, in_features)))
-            self.lora_Ay = nn.Parameter(self.weight.new_zeros((r, in_features)))
-            self.lora_Bx = nn.Parameter(self.weight.new_zeros((out_features, r)))
-            self.lora_By = nn.Parameter(self.weight.new_zeros((out_features, r)))
+            self.lora_Ax = nn.Parameter(self.weight.new_zeros(
+                (r, in_features)))
+            self.lora_Ay = nn.Parameter(self.weight.new_zeros(
+                (r, in_features)))
+            self.lora_Bx = nn.Parameter(
+                self.weight.new_zeros((out_features, r)))
+            self.lora_By = nn.Parameter(
+                self.weight.new_zeros((out_features, r)))
             self.scaling = self.lora_alpha / self.r
             # Freezing the pre-trained weight matrix
             self.weight.requires_grad = False
         self.reset_parameters()
-        self.lora_wx = torch.nn.Parameter(torch.FloatTensor(1), requires_grad=True)
-        self.lora_wy = torch.nn.Parameter(torch.FloatTensor(1), requires_grad=True)
+        self.lora_wx = torch.nn.Parameter(torch.FloatTensor(1),
+                                          requires_grad=True)
+        self.lora_wy = torch.nn.Parameter(torch.FloatTensor(1),
+                                          requires_grad=True)
         self.lora_wx.data.fill_(0.5)
         self.lora_wy.data.fill_(0.5)
         if fan_in_fan_out:
@@ -137,54 +150,79 @@ class Linear(nn.Linear, LoRALayer):
             nn.init.zeros_(self.lora_By)
 
     def train(self, mode: bool = True):
+
         def T(w):
             return w.T if self.fan_in_fan_out else w
+
         nn.Linear.train(self, mode)
-    
+
     def eval(self):
+
         def T(w):
             return w.T if self.fan_in_fan_out else w
+
         nn.Linear.eval(self)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, y: torch.Tensor = None):
+
         def T(w):
             return w.T if self.fan_in_fan_out else w
+
         if self.r > 0 and not self.merged:
-            resultx = F.linear(x, T(self.weight), bias=self.bias)
-            # resulty = F.linear(y, T(self.weight), bias=self.bias)
-            if self.r > 0:
-                # multimodal LoRA
-                # lorax = self.lora_dropout(x) @ self.lora_Ax.T @ self.lora_Bx.T
-                # loray = self.lora_dropout(y) @ self.lora_Ay.T @ self.lora_By.T
-                # resultx += self.lora_wx * lorax + (1 - self.lora_wx) * loray
-                # resulty += self.lora_wy * loray + (1 - self.lora_wy) * lorax
+            if y is None:
+                resultx = F.linear(x, T(self.weight), bias=self.bias)
+                if self.r > 0:
+                    lorax = self.lora_dropout(
+                        x) @ self.lora_Ax.T @ self.lora_Bx.T
+                    resultx += self.lora_wx * lorax
 
-                lorax = self.lora_dropout(x) @ self.lora_Ax.T @ self.lora_Bx.T
-                resultx += self.lora_wx * lorax
+                return resultx
+            else:
+                resultx = F.linear(x, T(self.weight), bias=self.bias)
+                resulty = F.linear(y, T(self.weight), bias=self.bias)
+                if self.r > 0:
+                    # multimodal LoRA
+                    lorax = self.lora_dropout(
+                        x) @ self.lora_Ax.T @ self.lora_Bx.T
+                    loray = self.lora_dropout(
+                        y) @ self.lora_Ay.T @ self.lora_By.T
+                    resultx += self.lora_wx * lorax + (1 -
+                                                       self.lora_wx) * loray
+                    resulty += self.lora_wy * loray + (1 -
+                                                       self.lora_wy) * lorax
 
-                # # ## ablation: The standard LoRA with multimodal
-                # resultx += (self.lora_dropout(x) @ self.lora_Ax.T @ self.lora_Bx.T) * self.scaling
-                # resulty += (self.lora_dropout(y) @ self.lora_Ay.T @ self.lora_By.T) * self.scaling
-            return resultx
+                    lorax = self.lora_dropout(
+                        x) @ self.lora_Ax.T @ self.lora_Bx.T
+                    resultx += self.lora_wx * lorax
+
+                    # ## ablation: The standard LoRA with multimodal
+                    resultx += (self.lora_dropout(x) @ self.lora_Ax.T
+                                @ self.lora_Bx.T) * self.scaling
+                    resulty += (self.lora_dropout(y) @ self.lora_Ay.T
+                                @ self.lora_By.T) * self.scaling
+                return resultx, resulty
+
         else:
             return F.linear(x, T(self.weight), bias=self.bias)
-    
+
+
 class MergedLinear(nn.Linear, LoRALayer):
     # LoRA implemented in a dense layer
-    def __init__(
-        self, 
-        in_features: int, 
-        out_features: int, 
-        r: int = 0, 
-        lora_alpha: int = 1, 
-        lora_dropout: float = 0.,
-        enable_lora: List[bool] = [False],
-        fan_in_fan_out: bool = False,
-        merge_weights: bool = True,
-        **kwargs
-    ):
+    def __init__(self,
+                 in_features: int,
+                 out_features: int,
+                 r: int = 0,
+                 lora_alpha: int = 1,
+                 lora_dropout: float = 0.,
+                 enable_lora: List[bool] = [False],
+                 fan_in_fan_out: bool = False,
+                 merge_weights: bool = True,
+                 **kwargs):
         nn.Linear.__init__(self, in_features, out_features, **kwargs)
-        LoRALayer.__init__(self, r=r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
+        LoRALayer.__init__(self,
+                           r=r,
+                           lora_alpha=lora_alpha,
+                           lora_dropout=lora_dropout,
                            merge_weights=merge_weights)
         assert out_features % len(enable_lora) == 0, \
             'The length of enable_lora must divide out_features'
@@ -195,20 +233,21 @@ class MergedLinear(nn.Linear, LoRALayer):
             self.lora_Ax = nn.Parameter(
                 self.weight.new_zeros((r * sum(enable_lora), in_features)))
             self.lora_Bx = nn.Parameter(
-                self.weight.new_zeros((out_features // len(enable_lora) * sum(enable_lora), r))
-            ) # weights for Conv1D with groups=sum(enable_lora)
+                self.weight.new_zeros(
+                    (out_features // len(enable_lora) * sum(enable_lora),
+                     r)))  # weights for Conv1D with groups=sum(enable_lora)
             self.lora_Ay = nn.Parameter(
                 self.weight.new_zeros((r * sum(enable_lora), in_features)))
             self.lora_By = nn.Parameter(
-                self.weight.new_zeros((out_features // len(enable_lora) * sum(enable_lora), r))
-            ) # weights for Conv1D with groups=sum(enable_lora)
+                self.weight.new_zeros(
+                    (out_features // len(enable_lora) * sum(enable_lora),
+                     r)))  # weights for Conv1D with groups=sum(enable_lora)
             self.scaling = self.lora_alpha / self.r
             # Freezing the pre-trained weight matrix
             self.weight.requires_grad = False
             # Compute the indices
             self.lora_ind = self.weight.new_zeros(
-                (out_features, ), dtype=torch.bool
-            ).view(len(enable_lora), -1)
+                (out_features, ), dtype=torch.bool).view(len(enable_lora), -1)
             self.lora_ind[enable_lora, :] = True
             self.lora_ind = self.lora_ind.view(-1)
         self.reset_parameters()
@@ -230,71 +269,89 @@ class MergedLinear(nn.Linear, LoRALayer):
         result = x.new_zeros((*x.shape[:-1], self.out_features))
         result = result.view(-1, self.out_features)
         result[:, self.lora_ind] = x.reshape(
-            -1, self.out_features // len(self.enable_lora) * sum(self.enable_lora)
-        )
+            -1,
+            self.out_features // len(self.enable_lora) * sum(self.enable_lora))
         return result.view((*x.shape[:-1], self.out_features))
 
     def train(self, mode: bool = True):
+
         def T(w):
             return w.T if self.fan_in_fan_out else w
+
         nn.Linear.train(self, mode)
-    
+
     def eval(self):
+
         def T(w):
             return w.T if self.fan_in_fan_out else w
+
         nn.Linear.eval(self)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, y: torch.Tensor = None):
+
         def T(w):
             return w.T if self.fan_in_fan_out else w
+
         if self.merged:
             return F.linear(x, T(self.weight), bias=self.bias)
         else:
-            resultx = F.linear(x, T(self.weight), bias=self.bias)
-            # resulty = F.linear(y, T(self.weight), bias=self.bias)
-            if self.r > 0:
-                after_Ax = F.linear(self.lora_dropout(x), self.lora_Ax)
-                after_Bx = F.conv1d(
-                    after_Ax.transpose(-2, -1), #B, 12, M
-                    self.lora_Bx.unsqueeze(-1), #3072, 4, 1
-                    groups=sum(self.enable_lora)
-                ).transpose(-2, -1)
-                resultx += self.zero_pad(after_Bx) * self.scaling
+            if y is None:
+                resultx = F.linear(x, T(self.weight), bias=self.bias)
+                if self.r > 0:
+                    after_Ax = F.linear(self.lora_dropout(x), self.lora_Ax)
+                    after_Bx = F.conv1d(
+                        after_Ax.transpose(-2, -1),  #B, 12, M
+                        self.lora_Bx.unsqueeze(-1),  #3072, 4, 1
+                        groups=sum(self.enable_lora)).transpose(-2, -1)
+                    resultx += self.zero_pad(after_Bx) * self.scaling
+                return resultx
+            else:
+                resultx = F.linear(x, T(self.weight), bias=self.bias)
+                resulty = F.linear(y, T(self.weight), bias=self.bias)
+                if self.r > 0:
+                    after_Ax = F.linear(self.lora_dropout(x), self.lora_Ax)
+                    after_Bx = F.conv1d(
+                        after_Ax.transpose(-2, -1),  #B, 12, M
+                        self.lora_Bx.unsqueeze(-1),  #3072, 4, 1
+                        groups=sum(self.enable_lora)).transpose(-2, -1)
+                    resultx += self.zero_pad(after_Bx) * self.scaling
 
-                # after_Ay = F.linear(self.lora_dropout(y), self.lora_Ay)
-                # after_By = F.conv1d(
-                #     after_Ay.transpose(-2, -1), #B, 12, M
-                #     self.lora_By.unsqueeze(-1), #3072, 4, 1
-                #     groups=sum(self.enable_lora)
-                # ).transpose(-2, -1)
-                # resulty += self.zero_pad(after_By) * self.scaling
-            return resultx
-        
+                    after_Ay = F.linear(self.lora_dropout(y), self.lora_Ay)
+                    after_By = F.conv1d(
+                        after_Ay.transpose(-2, -1),  #B, 12, M
+                        self.lora_By.unsqueeze(-1),  #3072, 4, 1
+                        groups=sum(self.enable_lora)).transpose(-2, -1)
+                    resulty += self.zero_pad(after_By) * self.scaling
+                return resultx, resulty
+
+
 class Conv2d(nn.Conv2d, LoRALayer):
     # LoRA implemented in a dense layer
-    def __init__(
-        self, 
-        in_channels: int, 
-        out_channels: int,
-        kernel_size: int,
-        r: int = 0, 
-        lora_alpha: int = 1, 
-        lora_dropout: float = 0.,
-        merge_weights: bool = True,
-        **kwargs
-    ):
-        nn.Conv2d.__init__(self, in_channels, out_channels, kernel_size, **kwargs)
-        LoRALayer.__init__(self, r=r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
+    def __init__(self,
+                 in_channels: int,
+                 out_channels: int,
+                 kernel_size: int,
+                 r: int = 0,
+                 lora_alpha: int = 1,
+                 lora_dropout: float = 0.,
+                 merge_weights: bool = True,
+                 **kwargs):
+        nn.Conv2d.__init__(self, in_channels, out_channels, kernel_size,
+                           **kwargs)
+        LoRALayer.__init__(self,
+                           r=r,
+                           lora_alpha=lora_alpha,
+                           lora_dropout=lora_dropout,
                            merge_weights=merge_weights)
         assert type(kernel_size) is int
         # Actual trainable parameters
         if r > 0:
             self.lora_A = nn.Parameter(
-                self.weight.new_zeros((r*kernel_size, in_channels*kernel_size))
-            )
+                self.weight.new_zeros(
+                    (r * kernel_size, in_channels * kernel_size)))
             self.lora_B = nn.Parameter(
-                self.weight.new_zeros((out_channels*kernel_size, r*kernel_size))
-            )
+                self.weight.new_zeros(
+                    (out_channels * kernel_size, r * kernel_size)))
             self.scaling = self.lora_alpha / self.r
             # Freezing the pre-trained weight matrix
             self.weight.requires_grad = False
@@ -311,21 +368,23 @@ class Conv2d(nn.Conv2d, LoRALayer):
         nn.Conv2d.train(self, mode)
         if self.merge_weights and self.merged:
             # Make sure that the weights are not merged
-            self.weight.data -= (self.lora_B @ self.lora_A).view(self.weight.shape) * self.scaling
+            self.weight.data -= (self.lora_B @ self.lora_A).view(
+                self.weight.shape) * self.scaling
             self.merged = False
-    
+
     def eval(self):
         nn.Conv2d.eval(self)
         if self.merge_weights and not self.merged:
             # Merge the weights and mark it
-            self.weight.data += (self.lora_B @ self.lora_A).view(self.weight.shape) * self.scaling
+            self.weight.data += (self.lora_B @ self.lora_A).view(
+                self.weight.shape) * self.scaling
             self.merged = True
 
     def forward(self, x: torch.Tensor):
         if self.r > 0 and not self.merged:
             return F.conv2d(
-                x, 
-                self.weight + (self.lora_B @ self.lora_A).view(self.weight.shape) * self.scaling,
-                self.bias, self.stride, self.padding, self.dilation, self.groups
-            )
+                x, self.weight +
+                (self.lora_B @ self.lora_A).view(self.weight.shape) *
+                self.scaling, self.bias, self.stride, self.padding,
+                self.dilation, self.groups)
         return nn.Conv2d.forward(self, x)

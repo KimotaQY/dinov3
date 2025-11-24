@@ -685,13 +685,13 @@ class UNetFormer(nn.Module):
                  decode_channels=64,
                  dropout=0.1,
                  window_size=8,
-                 num_classes=6):
+                 num_classes=6,
+                 sam_checkpoint=None):
         super().__init__()
         args = parse_args()
         # TODO: change vit path
         # self.sam = sam_model_registry["vit_b"](args,checkpoint='weights/sam_vit_b_01ec64.pth')
-        self.sam = sam_model_registry["vit_l"](
-            args, checkpoint='/home/yyyjvm/Checkpoints/sam_vit_l_0b3195.pth')
+        self.sam = sam_model_registry["vit_l"](args, checkpoint=sam_checkpoint)
         # self.sam = sam_model_registry["vit_h"](args,checkpoint='weights/sam_vit_h_4b8939.pth')
         self.image_encoder = self.sam.image_encoder
         encoder_channels = (256, 256, 256, 256)
@@ -734,10 +734,10 @@ class UNetFormer(nn.Module):
                                window_size, num_classes)
         # self.decoder = Decoder_single(encoder_channels, decode_channels, dropout, window_size, num_classes)
 
-    def forward(self, x, y=None, mode='Train'):
+    def forward(self, x, y=None):
         h, w = x.size()[-2:]
         if y is not None:
-            y = torch.unsqueeze(y, dim=1).repeat(1, 3, 1, 1)
+            y = y.repeat(1, 3, 1, 1)
             deepx, deepy = self.image_encoder(x, y)  # 256*16*16
 
             # #PFF:

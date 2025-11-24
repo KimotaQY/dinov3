@@ -24,7 +24,9 @@ def get_cfg(dataset_name=None):
     loss_fn = SoftCrossEntropyLoss(smooth_factor=0.05,
                                    ignore_index=ignore_index)
 
-    model = UNetFormer(num_classes=len(labels))
+    model = UNetFormer(
+        num_classes=len(labels),
+        sam_checkpoint='/home/yyyj/Checkpoints/sam_vit_l_0b3195.pth')
 
     # 根据GPU数量调整学习率
     if distributed.is_enabled():
