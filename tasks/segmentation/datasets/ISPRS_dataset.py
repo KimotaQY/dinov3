@@ -49,6 +49,19 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
         self.label_files = [label_dir.format(id) for id in ids]
         self.dsm_files = [dsm_dir.format(id)
                           for id in ids] if dsm_dir is not None else []
+        if dsm_dir is not None:
+            if "_" in ids[0]:
+                _ids = []
+                for id in ids:
+                    seg_ids = id.split("_")
+                    for i, seg_id in enumerate(seg_ids):
+                        seg_ids[i] = "0" + seg_id if len(
+                            seg_id) == 1 else seg_id
+
+                    _ids.append("_".join(seg_ids))
+            else:
+                _ids = ids
+            self.dsm_files = [dsm_dir.format(id) for id in _ids]
 
         # Sanity check : raise an error if some files do not exist
         for file in self.data_files + self.label_files + self.dsm_files:

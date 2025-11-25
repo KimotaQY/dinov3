@@ -20,11 +20,16 @@ def build_dataset(dataset_name, data_type="test", **kwargs):
                    '6_12', '6_7', '4_11'
                ]
         root_dir = "/home/yyyjvm/SS-datasets/ISPRS_dataset/"
-        data_dir = root_dir + "Potsdam/4_Ortho_RGBIR/top_potsdam_{}_RGBIR.tif"
-        label_dir = root_dir + "Potsdam/5_Labels_for_participants/top_potsdam_{}_label.tif"
+        data_dir = root_dir + "Potsdam/2_Ortho_RGB/top_potsdam_{}_RGB.tif"  # RGB
+        # data_dir = root_dir + "Potsdam/4_Ortho_RGBIR/top_potsdam_{}_RGBIR.tif"  # RGBIR
+        # label_dir = root_dir + "Potsdam/5_Labels_for_participants/top_potsdam_{}_label.tif"
+        label_dir = root_dir + "Potsdam/5_Labels_for_participants_no_Boundary/top_potsdam_{}_label_noBoundary.tif"
+        dsm_dir = root_dir + 'Potsdam/1_DSM_normalisation/dsm_potsdam_{}_normalized_lastools.jpg' if kwargs.get(
+            "modality") == "multi" else None
         return ISRPS_Dataset(ids=ids,
                              data_dir=data_dir,
                              label_dir=label_dir,
+                             dsm_dir=dsm_dir,
                              dataset_name=dataset_name,
                              data_type=data_type,
                              window_size=kwargs.get("window_size", (224, 224)),
