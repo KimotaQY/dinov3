@@ -30,7 +30,7 @@ from utils.clean_logs import clean_logs
 from configs import get_cfg
 
 DATASET_NAME = "Vaihingen"
-MODEL_NAME = "DINOv3"
+MODEL_NAME = "ESANet"
 
 
 def get_local_rank():
@@ -343,7 +343,8 @@ def test(model, test_loader, cfg):
                                    dsm=dsm,
                                    n_output_channels=len(classes),
                                    crop_size=window_size,
-                                   stride=(s_w, s_w))
+                                   stride=(s_w, s_w),
+                                   batch_size=cfg.get("batch_size", 4))
 
         pred = np.argmax(pred, axis=1)
         preds.append(pred)

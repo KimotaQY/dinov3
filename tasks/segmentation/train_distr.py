@@ -29,7 +29,7 @@ from utils.clean_logs import clean_logs
 
 from configs import get_cfg
 
-DATASET_NAME = "Vaihingen"
+DATASET_NAME = "Potsdam"
 MODEL_NAME = "DINOv3"
 
 
@@ -336,7 +336,8 @@ def test(model, test_loader, cfg):
                                    model,
                                    n_output_channels=len(classes),
                                    crop_size=window_size,
-                                   stride=(s_w, s_w))
+                                   stride=(s_w, s_w),
+                                   batch_size=cfg.get("batch_size", 4))
 
         pred = np.argmax(pred, axis=1)
         preds.append(pred)

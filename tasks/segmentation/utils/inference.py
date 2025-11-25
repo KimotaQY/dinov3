@@ -92,17 +92,16 @@ def make_inference(
     return pred
 
 
-def slide_inference(
-    inputs: torch.Tensor,
-    segmentation_model: nn.Module,
-    decoder_head_type: str = "linear",
-    n_output_channels: int = 256,
-    crop_size: Tuple = (512, 512),
-    stride: Tuple = (341, 341),
-    num_max_forward: int = 1,
-    dsm: torch.Tensor = None,
-):
-    """Inference by sliding-window with overlap.
+def slide_inference(inputs: torch.Tensor,
+                    segmentation_model: nn.Module,
+                    decoder_head_type: str = "linear",
+                    n_output_channels: int = 256,
+                    crop_size: Tuple = (512, 512),
+                    stride: Tuple = (341, 341),
+                    num_max_forward: int = 1,
+                    dsm: torch.Tensor = None,
+                    batch_size: int = 4):
+    """Inference by sliding-window with overlap, with batch processing optimization.
     If h_crop > h_img or w_crop > w_img, the small patch will be used to
     decode without padding.
     Args:
@@ -112,19 +111,27 @@ def slide_inference(
         n_output_channels (int): number of output channels
         crop_size (tuple): (h_crop, w_crop)
         stride (tuple): (h_stride, w_stride)
+        batch_size (int): number of crops to process in a single batch
     Returns:
         Tensor: The output results from model of each input image.
     """
     h_stride, w_stride = stride
     h_crop, w_crop = crop_size
-    batch_size, C, h_img, w_img = inputs.shape
+    batch_size_input, C, h_img, w_img = inputs.shape
     if h_crop > h_img and w_crop > w_img:  # Meaning we are doing < 1.0 TTA
         h_crop, w_crop = min(h_img, w_img), min(h_img, w_img)
-    assert batch_size == 1  # As of now, the code assumes that a single image is passed at a time at inference time
+    assert batch_size_input == 1  # As of now, the code assumes that a single image is passed at a time at inference time
     h_grids = max(h_img - h_crop + h_stride - 1, 0) // h_stride + 1
     w_grids = max(w_img - w_crop + w_stride - 1, 0) // w_stride + 1
-    preds = inputs.new_zeros((1, n_output_channels, h_img, w_img)).cpu()
-    count_mat = inputs.new_zeros((1, 1, h_img, w_img)).to(torch.int8).cpu()
+    preds = inputs.new_zeros(
+        (1, n_output_channels, h_img, w_img)).to(inputs.device)
+    count_mat = inputs.new_zeros(
+        (1, 1, h_img, w_img)).to(torch.int8).to(inputs.device)
+
+    # 收集所有裁剪区域和坐标
+    crop_list = []
+    coord_list = []
+
     for h_idx in range(h_grids):
         for w_idx in range(w_grids):
             y1 = h_idx * h_stride
@@ -133,31 +140,53 @@ def slide_inference(
             x2 = min(x1 + w_crop, w_img)
             y1 = max(y2 - h_crop, 0)
             x1 = max(x2 - w_crop, 0)
+
+            # 保存裁剪图像和坐标
             if dsm is not None:
                 crop_img = inputs[:, :, y1:y2, x1:x2]
-                crop_pred = segmentation_model(crop_img, dsm[:, :, y1:y2,
-                                                             x1:x2])
+                crop_dsm = dsm[:, :, y1:y2, x1:x2]
+                crop_list.append((crop_img, crop_dsm))
             else:
                 crop_img = inputs[:, :, y1:y2, x1:x2]
-                crop_pred = segmentation_model(crop_img)
-            if decoder_head_type == "m2f":
-                mask_pred, mask_cls = crop_pred["pred_masks"], crop_pred[
-                    "pred_logits"]
-                mask_cls = F.softmax(mask_cls, dim=-1)[..., :-1]
-                mask_pred = mask_pred.sigmoid()
-                crop_pred = torch.einsum("bqc,bqhw->bchw",
-                                         mask_cls.to(torch.bfloat16),
-                                         mask_pred.to(torch.bfloat16))
-                del mask_cls, mask_pred
+                crop_list.append(crop_img)
+            coord_list.append((y1, y2, x1, x2))
+
+    # 批量处理所有裁剪区域
+    for i in range(0, len(crop_list), batch_size):
+        batch_crops = crop_list[i:i + batch_size]
+        batch_coords = coord_list[i:i + batch_size]
+
+        # 构造批次张量
+        if dsm is not None:
+            batch_img = torch.cat([crop[0] for crop in batch_crops], dim=0)
+            batch_dsm = torch.cat([crop[1] for crop in batch_crops], dim=0)
+            batch_preds = segmentation_model(batch_img, batch_dsm)
+        else:
+            batch_img = torch.cat(batch_crops, dim=0)
+            batch_preds = segmentation_model(batch_img)
+
+        # 处理批次预测结果
+        if decoder_head_type == "m2f":
+            mask_pred, mask_cls = batch_preds["pred_masks"], batch_preds[
+                "pred_logits"]
+            mask_cls = F.softmax(mask_cls, dim=-1)[..., :-1]
+            mask_pred = mask_pred.sigmoid()
+            batch_preds = torch.einsum("bqc,bqhw->bchw",
+                                       mask_cls.to(torch.float),
+                                       mask_pred.to(torch.float))
+
+        # 将结果添加到最终预测图中
+        for j, (y1, y2, x1, x2) in enumerate(batch_coords):
+            crop_pred = batch_preds[j:j + 1]  # 保持批次维度
             preds += F.pad(crop_pred,
                            (int(x1), int(preds.shape[-1] - x2), int(y1),
-                            int(preds.shape[-2] - y2))).cpu()
+                            int(preds.shape[-2] - y2))).to(inputs.device)
             count_mat[:, :, y1:y2, x1:x2] += 1
-            del crop_img, crop_pred
+
     # Optional buffer to ensure each gpu does the same number of operations for sharded models
     for _ in range(h_grids * w_grids, num_max_forward):
         dummy_input = inputs.new_zeros((1, C, h_crop, w_crop))
         _ = segmentation_model.predict(dummy_input,
                                        rescale_to=dummy_input.shape[2:])
     assert (count_mat == 0).sum() == 0
-    return preds / count_mat
+    return preds.cpu() / count_mat.cpu()
