@@ -22,8 +22,6 @@ class SampleAdapter(nn.Module):
     def __init__(self, in_channels, out_channels=[256, 512, 1024, 1024]):
         super(SampleAdapter, self).__init__()
 
-        # self.lama = LAMA(in_channels, 4)
-
         self.projects = nn.ModuleList([
             nn.Conv2d(
                 in_channels=in_channels,
@@ -53,21 +51,49 @@ class SampleAdapter(nn.Module):
                       padding=1)
         ])
 
-    def forward(self, out_features, patch_h, patch_w):
-        out = []
-        for i, x in enumerate(out_features):
-            # x = self.lama(x, (x.shape[0], x.shape[-1], patch_h, patch_w))
-            x = x.permute(0, 2, 1).reshape(
-                (x.shape[0], x.shape[-1], patch_h, patch_w))
+        # 使用自适应权重相加
+        self.wx_Adapter = nn.Parameter(torch.FloatTensor(1),
+                                       requires_grad=True)
+        self.wy_Adapter = nn.Parameter(torch.FloatTensor(1),
+                                       requires_grad=True)
+        self.wx_Adapter.data.fill_(0.5)
+        self.wy_Adapter.data.fill_(0.5)
 
-            x = self.projects[i](x)
-            x = self.resize_layers[i](x)
+    def forward(self, features_x, features_y=None, patch_h=None, patch_w=None):
+        if features_y is None:
+            out = []
+            for i, x in enumerate(features_x):
+                x = x.permute(0, 2, 1).reshape(
+                    (x.shape[0], x.shape[-1], patch_h, patch_w))
 
-            out.append(x)
+                x = self.projects[i](x)
+                x = self.resize_layers[i](x)
 
-        # layer_1, layer_2, layer_3, layer_4 = out
+                out.append(x)
 
-        return out
+            return out
+        else:
+            out_x = []
+            out_y = []
+            for i, (x, y) in enumerate(zip(features_x, features_y)):
+                x = x.permute(0, 2, 1).reshape(
+                    (x.shape[0], x.shape[-1], patch_h, patch_w))
+                y = y.permute(0, 2, 1).reshape(
+                    (y.shape[0], y.shape[-1], patch_h, patch_w))
+
+                x = self.projects[i](x)
+                y = self.projects[i](y)
+
+                x = self.resize_layers[i](x)
+                y = self.resize_layers[i](y)
+
+                x = self.wx_Adapter * x + (1 - self.wx_Adapter) * y
+                y = self.wy_Adapter * y + (1 - self.wy_Adapter) * x
+
+                out_x.append(x)
+                out_y.append(y)
+
+            return out_x, out_y
 
 
 class DPTHead(nn.Module):

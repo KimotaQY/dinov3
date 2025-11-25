@@ -135,7 +135,9 @@ class DINOSegment(nn.Module):
             outputs = self.backbone.get_intermediate_layers(
                 x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
 
-            multi_scale_features = self.adapter(outputs, patch_h, patch_w)
+            multi_scale_features = self.adapter(outputs,
+                                                patch_h=patch_h,
+                                                patch_w=patch_w)
 
             logits = self.decoder(multi_scale_features)
 
@@ -152,8 +154,8 @@ class DINOSegment(nn.Module):
             outputs_y = self.backbone.get_intermediate_layers(
                 y, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
 
-            multi_scale_features_x = self.adapter(outputs_x, patch_h, patch_w)
-            multi_scale_features_y = self.adapter(outputs_y, patch_h, patch_w)
+            multi_scale_features_x, multi_scale_features_y = self.adapter(
+                outputs_x, outputs_y, patch_h, patch_w)
 
             logits = self.decoder(multi_scale_features_x,
                                   multi_scale_features_y)
