@@ -21,7 +21,7 @@ def get_cfg(dataset_name=None):
 
     base_lr = args.lr
     batch_size = 8
-    epochs = 50
+    epochs = 500
     window_size = (512, 512)
     labels = get_labels(dataset_name)
     ignore_index = len(labels)
