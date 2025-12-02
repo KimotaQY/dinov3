@@ -6,7 +6,6 @@ import numpy as np
 import torch
 from PIL import Image
 import torchvision.transforms.functional as TF
-import albumentations as albu
 
 deps_path = os.path.join(os.path.dirname(__file__), "task/segmentation")
 sys.path.insert(0, deps_path)
@@ -50,7 +49,7 @@ class ISRPS_Dataset(torch.utils.data.Dataset):
         self.dsm_files = [dsm_dir.format(id)
                           for id in ids] if dsm_dir is not None else []
         if dsm_dir is not None:
-            if "_" in ids[0]:
+            if isinstance(ids[0], str) and "_" in ids[0]:
                 _ids = []
                 for id in ids:
                     seg_ids = id.split("_")
