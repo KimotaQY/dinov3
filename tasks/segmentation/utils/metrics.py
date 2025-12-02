@@ -167,3 +167,55 @@ def metrics(predictions, gts, label_values):
     logger.info("---")
 
     return MIoU, F1Score, kappa, accuracy
+
+
+def metrics_print_version(predictions, gts, label_values):
+    cm = confusion_matrix(gts, predictions, labels=range(len(label_values)))
+
+    print("Confusion matrix :")
+    print(cm)
+    # Compute global accuracy
+    total = sum(sum(cm))
+    accuracy = sum([cm[x][x] for x in range(len(cm))])
+    accuracy *= 100 / float(total)
+    print("%d pixels processed" % (total))
+    print("Total accuracy : %.2f" % (accuracy))
+
+    Acc = np.diag(cm) / cm.sum(axis=1)
+    for l_id, score in enumerate(Acc):
+        print("%s: %.4f" % (label_values[l_id], score))
+    print("---")
+
+    # Compute F1 score
+    F1Score = np.zeros(len(label_values))
+    for i in range(len(label_values)):
+        try:
+            F1Score[i] = 2. * cm[i, i] / (np.sum(cm[i, :]) + np.sum(cm[:, i]))
+        except:
+            # Ignore exception if there is no element in class i for test set
+            pass
+    print("F1Score / IoU:")
+    # Compute MIoU coefficient
+    MIoU = np.diag(cm) / (np.sum(cm, axis=1) + np.sum(cm, axis=0) -
+                          np.diag(cm))
+    for l_id, (f1_score, iou_score) in enumerate(zip(F1Score, MIoU)):
+        print("%s: %.2f / %.2f" %
+              (label_values[l_id], f1_score * 100, iou_score * 100))
+    F1Score = np.nanmean(F1Score[:(len(label_values) - 1)])
+    print("---")
+    print('mean F1Score: %.4f' % (F1Score))
+    print("---")
+    MIoU = np.nanmean(MIoU[:(len(label_values) - 1)])
+    print('mean MIoU: %.4f' % (MIoU))
+    print("---")
+
+    # Compute kappa coefficient
+    total = np.sum(cm)
+    pa = np.trace(cm) / float(total)
+    pe = np.sum(np.sum(cm, axis=0) * np.sum(cm, axis=1)) / float(total * total)
+    kappa = (pa - pe) / (1 - pe)
+    print("Kappa: %.4f" % (kappa))
+
+    # print(MIoU)
+
+    return MIoU, F1Score, kappa, accuracy
