@@ -125,7 +125,7 @@ class ProgressiveRefinementNeck(nn.Module):
 
     def forward(self, backbone_features):
         """
-        PRN前向传播 - 严格对应论文中的P2-P5流程
+        PRN前向传播 - 对应论文中的P2-P5流程
         
         Args:
             backbone_features: 主干网络特征 [P2_in, P3_in, P4_in, P5_in]
@@ -280,7 +280,7 @@ class PRNDecoder(nn.Module):
         return self.out_conv(p2)
 
 
-# 使用示例 - 严格对应论文描述
+# 使用示例
 if __name__ == "__main__":
     # 论文中实际使用的P2-P5三个尺度
     batch_size = 4
