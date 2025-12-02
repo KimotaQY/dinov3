@@ -11,3 +11,7 @@ sudo umount  /home/yyyj/SS-datasets/YYYJ_dataset/Desktop-vvgck54/20251105
 ```bash
 uvicorn api:app --reload --host 0.0.0.0 --port 8000
 ```
+
+```bash
+CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 --master_port=29500 ./tasks/segmentation/train_multi.py
+```
