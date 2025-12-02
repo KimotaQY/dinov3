@@ -2,17 +2,17 @@ import torch.optim as optim
 
 from losses import *
 from .common_cfg import *
-from tasks.segmentation.models.My_DINO.dino_segment import DINOSegment
+from tasks.segmentation.models.My_DINO.dino_segment import DINOSegment, DINOSegment_Linear
 
 # 导入分布式训练相关模块
 import dinov3.distributed as distributed
 
 
-def get_cfg(dataset_name=None):
+def get_cfg(model_name=None, dataset_name=None):
     if dataset_name is None:
         raise ValueError("Dataset name must be specified")
 
-    base_lr = 2e-4
+    base_lr = 1e-4
     batch_size = 8
     epochs = 50
     window_size = (512, 512)
@@ -22,12 +22,17 @@ def get_cfg(dataset_name=None):
         SoftCrossEntropyLoss(smooth_factor=0.05, ignore_index=ignore_index),
         DiceLoss(smooth=0.05, ignore_index=ignore_index), 1.0, 1.0)
 
-    # pretrained_model_name = "/home/yyyjvm/Checkpoints/facebook/dinov3-vitl16-pretrain-sat493m"
-    backbone_weights = "/home/yyyjvm/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
-    model = DINOSegment(backbone_weights=backbone_weights,
-                        n_classes=len(labels),
-                        window_size=window_size,
-                        use_lora=False)
+    # pretrained_model_name = "/home/yyyj/Checkpoints/facebook/dinov3-vitl16-pretrain-sat493m"
+    backbone_weights = "/home/yyyj/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
+    if model_name == 'DINOv3':
+        model = DINOSegment(backbone_weights=backbone_weights,
+                            n_classes=len(labels),
+                            window_size=window_size,
+                            use_lora=False)
+    elif model_name == 'DINOv3_baseline':
+        model = DINOSegment_Linear(backbone_weights=backbone_weights,
+                                   n_classes=len(labels),
+                                   use_lora=False)
 
     # 根据GPU数量调整学习率
     if distributed.is_enabled():
@@ -54,7 +59,7 @@ def get_cfg(dataset_name=None):
     param_groups = [
         {
             'params': backbone_params,
-            'lr': base_lr * 1
+            'lr': base_lr
         },
         {
             'params': other_params,
