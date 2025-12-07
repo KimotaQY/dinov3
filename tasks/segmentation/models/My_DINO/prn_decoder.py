@@ -207,32 +207,6 @@ class PRNDecoder(nn.Module):
         self.neck = ProgressiveRefinementNeck(channels_list=[out_channels] * 4,
                                               num_stages=1)
 
-        # self.gcbam0 = GCBAM(out_channels, group=1)
-        # self.cbam = CBAM(out_channels)
-
-        # self.pki_block = Poly_Kernel_Inception_Block(out_channels,
-        #                                              out_channels)
-
-        # self.upsample = nn.Upsample(scale_factor=2)
-
-        # self.conv2 = ConvBNReLU(out_channels, inner_channels[1], 3)
-        # self.conv3 = ConvBNReLU(inner_channels[1], inner_channels[2], 3)
-        # self.conv4 = ConvBNReLU(inner_channels[2], inner_channels[3], 3)
-        # # self.conv5 = ConvBNReLU(inner_channels[3], n_classes, 1, pad=0)
-
-        # self.fusion1 = HaarFusion(out_channels, wave='haar')
-        # self.fusion2 = HaarFusion(inner_channels[1], wave='haar')
-        # self.fusion3 = HaarFusion(inner_channels[2], wave='haar')
-
-        # self.inter_conv2 = nn.Sequential(
-        #     nn.Conv2d(out_channels, inner_channels[1], 1),
-        #     # FrequencyChannelAttention(inner_channels[2]),
-        # )
-        # self.inter_conv3 = nn.Sequential(
-        #     nn.Conv2d(out_channels, inner_channels[2], 1),
-        #     # FrequencyChannelAttention(inner_channels[2]),
-        # )
-
         self.out_conv = ConvBNReLU(out_channels, n_classes, 1, pad=0)
 
     def forward(self, x, y=None):
@@ -277,6 +251,109 @@ class PRNDecoder(nn.Module):
         # x = self.conv4(x)
 
         # return self.conv5(x)
+        return self.out_conv(p2)
+
+
+class Decoder_PRN(nn.Module):
+
+    def __init__(
+        self,
+        n_classes,
+        in_channels=[256, 512, 1024, 1024],
+        out_channels=256,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels  # 1024
+        self.out_channels = out_channels  # 1024 // 8 = 128
+
+        self.fusion1 = SEFusion(in_channels[0])
+        self.fusion2 = SEFusion(in_channels[1])
+        self.fusion3 = SEFusion(in_channels[2])
+        self.fusion4 = SEFusion(in_channels[3])
+
+        self.neck = ProgressiveRefinementNeck(channels_list=in_channels,
+                                              num_stages=1)
+
+        self.out_conv = ConvBNReLU(in_channels[0], n_classes, 1, pad=0)
+
+    def forward(self, x, y=None):
+        if y is None:
+            features = x
+
+            p2, p3, p4 = self.neck(features)
+        else:
+            x2, x3, x4, x5 = x
+            y2, y3, y4, y5 = y
+
+            ff1 = self.fusion1(x2, y2)
+            ff2 = self.fusion2(x3, y3)
+            ff3 = self.fusion3(x4, y4)
+            ff4 = self.fusion4(x5, y5)
+
+            features = (ff1, ff2, ff3, ff4)
+
+            p2, p3, p4 = self.neck(features)
+
+        return self.out_conv(p2)
+
+
+class Decoder_FRM(nn.Module):
+
+    def __init__(
+        self,
+        n_classes,
+        in_channels=[256, 512, 1024, 1024],
+        out_channels=256,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels  # 1024
+        self.out_channels = out_channels  # 1024 // 8 = 128
+
+        # TODO: change the input channels
+        self.frm = FeatureReinforcementModule([in_channels[0]] + in_channels,
+                                              out_channels)
+
+        self.fusion1 = SEFusion(out_channels)
+        self.fusion2 = SEFusion(out_channels)
+        self.fusion3 = SEFusion(out_channels)
+        self.fusion4 = SEFusion(out_channels)
+
+        self.out_conv = ConvBNReLU(out_channels, n_classes, 1, pad=0)
+
+    def forward(self, x, y=None):
+        if y is None:
+            features = self.frm(*x)
+            x1, x2, x3, x4 = features
+
+            H, W = x1.shape[2:]
+            p2 = x1
+            for _x in [x2, x3, x4]:
+                p2 = p2 + F.interpolate(
+                    _x,
+                    size=(H, W),
+                    mode="bilinear",
+                )
+
+        else:
+            x2, x3, x4, x5 = self.frm(*x)
+            y2, y3, y4, y5 = self.frm(*y)
+
+            ff1 = self.fusion1(x2, y2)
+            ff2 = self.fusion2(x3, y3)
+            ff3 = self.fusion3(x4, y4)
+            ff4 = self.fusion4(x5, y5)
+
+            H, W = ff1.shape[2:]
+            p2 = ff1
+            for _x in [ff2, ff3, ff4]:
+                p2 = p2 + F.interpolate(
+                    _x,
+                    size=(H, W),
+                    mode="bilinear",
+                )
+
         return self.out_conv(p2)
 
 

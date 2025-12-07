@@ -2,7 +2,7 @@ import torch.optim as optim
 
 from losses import *
 from .common_cfg import *
-from tasks.segmentation.models.My_DINO.dino_segment import DINOSegment, DINOSegment_Linear
+from tasks.segmentation.models.My_DINO.dino_segment import DINOSegment, DINOSegment_Linear, DINOSegment_Adapter, DINOSegment_PRNDecoder, DINOSegment_Decoder_PRN, DINOSegment_Decoder_FRM
 
 # 导入分布式训练相关模块
 import dinov3.distributed as distributed
@@ -33,6 +33,22 @@ def get_cfg(model_name=None, dataset_name=None):
         model = DINOSegment_Linear(backbone_weights=backbone_weights,
                                    n_classes=len(labels),
                                    use_lora=False)
+    elif model_name == 'DINOv3_Adapter':
+        model = DINOSegment_Adapter(backbone_weights=backbone_weights,
+                                    n_classes=len(labels),
+                                    use_lora=False)
+    elif model_name == 'DINOv3_PRN':
+        model = DINOSegment_PRNDecoder(backbone_weights=backbone_weights,
+                                       n_classes=len(labels),
+                                       use_lora=False)
+    elif model_name == 'DINOv3_PRN_only':
+        model = DINOSegment_Decoder_PRN(backbone_weights=backbone_weights,
+                                        n_classes=len(labels),
+                                        use_lora=False)
+    elif model_name == 'DINOv3_FRM_only':
+        model = DINOSegment_Decoder_FRM(backbone_weights=backbone_weights,
+                                        n_classes=len(labels),
+                                        use_lora=False)
 
     # 根据GPU数量调整学习率
     if distributed.is_enabled():
