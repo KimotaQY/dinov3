@@ -18,6 +18,21 @@ from utils.inference import slide_inference
 
 # 添加GeoTIFF处理和WKT生成所需库
 import rasterio
+from rasterio.features import shapes
+from shapely.geometry import shape, mapping
+from shapely import wkt
+import json
+
+# 添加geopandas用于shapefile支持
+try:
+    import geopandas as gpd
+    from shapely.geometry import Polygon
+    SHAPEFILE_SUPPORT = True
+except ImportError:
+    SHAPEFILE_SUPPORT = False
+    print(
+        "Warning: geopandas not installed. Shapefile export will not be available."
+    )
 
 from configs import get_cfg
 
@@ -120,6 +135,111 @@ def save_labelme_format(pred_class, image_path, output_json_path, labels_map):
         json.dump(labelme_json, f, ensure_ascii=False, indent=2)
 
     print(f"Labelme JSON格式文件已保存至: {output_json_path}")
+
+
+def generate_wkt_polygons(classification_result, profile):
+    """将分类结果转换为WKT多边形格式
+    
+    Args:
+        classification_result: 分类结果数组 (H, W)
+        profile: GeoTIFF元数据
+        
+    Returns:
+        dict: 每个类别的WKT多边形列表
+    """
+    print("Generating WKT polygons from classification results")
+    # 获取变换矩阵和坐标系
+    transform = profile['transform']
+    crs = profile['crs']
+
+    polygons_by_class = {}
+
+    # 为每个类别生成多边形
+    for class_id in np.unique(classification_result):
+        class_id = int(class_id)  # 转换为Python原生int类型
+        # if class_id == 0:  # 跳过背景类（如果需要）
+        #     continue
+
+        # 创建该类别的二值掩码
+        mask = (classification_result == class_id).astype(np.uint8)
+
+        # 生成多边形
+        results = ({
+            'properties': {
+                'class_id': class_id,
+                'id': i
+            },
+            'geometry': s
+        } for i, (
+            s, v) in enumerate(shapes(mask, mask=mask, transform=transform)))
+
+        # 转换为WKT格式
+        polygons = []
+        for result in results:
+            geom = shape(result['geometry'])
+            polygons.append({
+                'wkt': wkt.dumps(geom),
+                'class_id': class_id,
+                'id': int(result['properties']['id'])
+            })
+
+        if polygons:
+            polygons_by_class[LABELS[int(class_id)]] = polygons
+
+    print(f"Generated WKT polygons for {len(polygons_by_class)} classes")
+    return polygons_by_class
+
+
+def generate_shapefile_from_wkt(wkt_polygons, output_shp_path, profile):
+    """将WKT多边形转换为Shapefile格式并保存
+    
+    Args:
+        wkt_polygons: WKT多边形字典
+        output_shp_path: 输出Shapefile路径
+        profile: GeoTIFF元数据，包含坐标系统等信息
+    """
+    if not SHAPEFILE_SUPPORT:
+        print("Geopandas not available, cannot save Shapefile")
+        return False
+
+    print("Converting WKT polygons to Shapefile")
+
+    geometries = []
+    labels = []
+    class_ids = []
+
+    # 遍历所有类别和对应的多边形
+    for label, polygons in wkt_polygons.items():
+        for poly_data in polygons:
+            # 从WKT创建几何对象
+            geom = wkt.loads(poly_data['wkt'])
+
+            geometries.append(geom)
+            labels.append(label)
+            class_ids.append(poly_data['class_id'])
+
+    # 创建GeoDataFrame
+    gdf = gpd.GeoDataFrame({
+        'label': labels,
+        'class_id': class_ids,
+        'geometry': geometries
+    })
+
+    # 设置坐标参考系统
+    if 'crs' in profile:
+        gdf.crs = profile['crs']
+    else:
+        # 如果没有CRS信息，默认使用WGS84
+        gdf.crs = 'EPSG:4326'
+
+    # 保存为Shapefile
+    try:
+        gdf.to_file(output_shp_path, driver='ESRI Shapefile')
+        print(f"Shapefile saved successfully to {output_shp_path}")
+        return True
+    except Exception as e:
+        print(f"Error saving Shapefile: {str(e)}")
+        return False
 
 
 def load_model(model_cfg):
@@ -226,6 +346,7 @@ if __name__ == "__main__":
     model, cfg = load_model(model_cfg)
     # colored_pred, overlay = predict(data, model)
     N_CLASSES = len(cfg.get("labels"))
+    LABELS = cfg.get("labels")
     pred = predict(data, model)
 
     # 将预测结果转换为GeoTIFF格式并保存
@@ -243,13 +364,28 @@ if __name__ == "__main__":
                                    f"{base_name}_polygons.json")
     output_labelme_path = os.path.join(os.path.dirname(img_path),
                                        f"{base_name}_labelme.json")
+    output_shp_path = os.path.join(os.path.dirname(img_path),
+                                   f"{base_name}_polygons.shp")
 
     # 保存分类结果为GeoTIFF
     # with rasterio.open(output_geotiff_path, 'w', **profile) as dst:
     #     dst.write(pred_class.astype(rasterio.uint8), 1)
 
+    # 生成WKT格式的多边形
+    wkt_polygons = generate_wkt_polygons(pred_class, profile)
+
+    # 生成Shapefile
+    if SHAPEFILE_SUPPORT:
+        success = generate_shapefile_from_wkt(wkt_polygons, output_shp_path,
+                                              profile)
+        if success:
+            print(f"Shapefile saved to {output_shp_path}")
+        else:
+            print(f"Failed to save Shapefile to {output_shp_path}")
+    else:
+        print("Shapefile support not available due to missing geopandas")
+
     # 生成labelme格式的JSON
     # 创建标签映射字典
-    LABELS = cfg.get("labels")
     labels_map = {i: LABELS[i] for i in range(len(LABELS))}
     save_labelme_format(pred_class, img_path, output_labelme_path, labels_map)

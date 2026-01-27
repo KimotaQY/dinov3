@@ -25,6 +25,17 @@ from shapely.geometry import shape, mapping
 from shapely import wkt
 import json
 
+# 添加geopandas用于shapefile支持
+try:
+    import geopandas as gpd
+    from shapely.geometry import Polygon
+    SHAPEFILE_SUPPORT = True
+except ImportError:
+    SHAPEFILE_SUPPORT = False
+    print(
+        "Warning: geopandas not installed. Shapefile export will not be available."
+    )
+
 import numpy as np
 import torch
 from PIL import Image
@@ -585,6 +596,58 @@ def clip_wkt_with_geojson(wkt_polygons, geojson_roi):
         return wkt_polygons
 
 
+def generate_shapefile_from_wkt(wkt_polygons, output_shp_path, profile):
+    """将WKT多边形转换为Shapefile格式并保存
+    
+    Args:
+        wkt_polygons: WKT多边形字典
+        output_shp_path: 输出Shapefile路径
+        profile: GeoTIFF元数据，包含坐标系统等信息
+    """
+    if not SHAPEFILE_SUPPORT:
+        task_logger.error("Geopandas not available, cannot save Shapefile")
+        return False
+
+    task_logger.debug("Converting WKT polygons to Shapefile")
+
+    geometries = []
+    labels = []
+    class_ids = []
+
+    # 遍历所有类别和对应的多边形
+    for label, polygons in wkt_polygons.items():
+        for poly_data in polygons:
+            # 从WKT创建几何对象
+            geom = wkt.loads(poly_data['wkt'])
+
+            geometries.append(geom)
+            labels.append(label)
+            class_ids.append(poly_data['class_id'])
+
+    # 创建GeoDataFrame
+    gdf = gpd.GeoDataFrame({
+        'label': labels,
+        'class_id': class_ids,
+        'geometry': geometries
+    })
+
+    # 设置坐标参考系统
+    if 'crs' in profile:
+        gdf.crs = profile['crs']
+    else:
+        # 如果没有CRS信息，默认使用WGS84
+        gdf.crs = 'EPSG:4326'
+
+    # 保存为Shapefile
+    try:
+        gdf.to_file(output_shp_path, driver='ESRI Shapefile')
+        task_logger.info(f"Shapefile saved successfully to {output_shp_path}")
+        return True
+    except Exception as e:
+        task_logger.error(f"Error saving Shapefile: {str(e)}")
+        return False
+
+
 def update_task(id: int, content: str, status: int):
     url = f"{BASE_URL}/app/AiModel/updateTask"
 
@@ -723,6 +786,8 @@ if __name__ == "__main__":
                                        f"{base_name}_classified.tif")
     output_wkt_path = os.path.join(os.path.dirname(img_path),
                                    f"{base_name}_polygons.json")
+    output_shp_path = os.path.join(os.path.dirname(img_path),
+                                   f"{base_name}_polygons.shp")
 
     # 保存分类结果为GeoTIFF
     with rasterio.open(output_geotiff_path, 'w', **profile) as dst:
@@ -730,6 +795,18 @@ if __name__ == "__main__":
 
     # 生成WKT格式的多边形
     wkt_polygons = generate_wkt_polygons(pred_class, profile)
+
+    # 生成Shapefile
+    if SHAPEFILE_SUPPORT:
+        success = generate_shapefile_from_wkt(wkt_polygons, output_shp_path,
+                                              profile)
+        if success:
+            task_logger.info(f"Shapefile saved to {output_shp_path}")
+        else:
+            task_logger.error(f"Failed to save Shapefile to {output_shp_path}")
+    else:
+        task_logger.warning(
+            "Shapefile support not available due to missing geopandas")
 
     # 每类只保留一个多边形
     # for key, value in wkt_polygons.items():
