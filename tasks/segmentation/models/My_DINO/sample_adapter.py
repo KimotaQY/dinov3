@@ -19,7 +19,10 @@ def _make_fusion_block(features, use_bn, size=None):
 
 class SampleAdapter(nn.Module):
 
-    def __init__(self, in_channels, out_channels=[256, 512, 1024, 1024]):
+    def __init__(self,
+                 in_channels,
+                 out_channels=[256, 512, 1024, 1024],
+                 num_modalities: int = 1):
         super(SampleAdapter, self).__init__()
 
         self.projects = nn.ModuleList([
@@ -51,18 +54,26 @@ class SampleAdapter(nn.Module):
                       padding=1)
         ])
 
-        # 使用自适应权重相加
-        self.wx_Adapter = nn.Parameter(torch.FloatTensor(1),
-                                       requires_grad=True)
-        self.wy_Adapter = nn.Parameter(torch.FloatTensor(1),
-                                       requires_grad=True)
-        self.wx_Adapter.data.fill_(0.5)
-        self.wy_Adapter.data.fill_(0.5)
+        self.num_modalities = num_modalities
+        if num_modalities > 1:
+            self.modality_weights = nn.ParameterDict()
+            for i in range(num_modalities):
+                param_name = f'weight_modality_{i}'
+                if param_name not in self.modality_weights:
+                    self.modality_weights[param_name] = nn.Parameter(
+                        torch.FloatTensor(1), requires_grad=True)
+                    # 初始化权重，使它们的和接近1
+                    self.modality_weights[param_name].data.fill_(
+                        1.0 / num_modalities)
 
-    def forward(self, features_x, features_y=None, patch_h=None, patch_w=None):
-        if features_y is None:
+    def forward(self, *features_list, patch_h=None, patch_w=None):
+        if len(features_list) == 0:
+            raise ValueError("At least one feature set must be provided")
+
+        if len(features_list) == 1:
+            # 单模态情况
             out = []
-            for i, x in enumerate(features_x):
+            for i, x in enumerate(features_list[0]):
                 x = x.permute(0, 2, 1).reshape(
                     (x.shape[0], x.shape[-1], patch_h, patch_w))
 
@@ -73,27 +84,50 @@ class SampleAdapter(nn.Module):
 
             return out
         else:
-            out_x = []
-            out_y = []
-            for i, (x, y) in enumerate(zip(features_x, features_y)):
-                x = x.permute(0, 2, 1).reshape(
-                    (x.shape[0], x.shape[-1], patch_h, patch_w))
-                y = y.permute(0, 2, 1).reshape(
-                    (y.shape[0], y.shape[-1], patch_h, patch_w))
+            # 多模态情况（2到n个模态）
+            # 动态创建或获取模态权重参数
+            if len(features_list) != self.num_modalities:
+                raise ValueError(
+                    f"Number of modalities ({len(features_list)}) does not match the number of modality weights ({self.num_modalities})"
+                )
+            num_modalities = len(features_list)
 
-                x = self.projects[i](x)
-                y = self.projects[i](y)
+            # 处理每个模态的特征
+            all_processed_features = [[] for _ in range(len(features_list[0]))
+                                      ]  # 为每个层级创建列表
 
-                x = self.resize_layers[i](x)
-                y = self.resize_layers[i](y)
+            for modality_idx, features in enumerate(features_list):
+                for i, feat in enumerate(features):
+                    feat = feat.permute(0, 2, 1).reshape(
+                        (feat.shape[0], feat.shape[-1], patch_h, patch_w))
 
-                x = self.wx_Adapter * x + (1 - self.wx_Adapter) * y
-                y = self.wy_Adapter * y + (1 - self.wy_Adapter) * x
+                    feat = self.projects[i](feat)
+                    feat = self.resize_layers[i](feat)
 
-                out_x.append(x)
-                out_y.append(y)
+                    all_processed_features[i].append(feat)
 
-            return out_x, out_y
+            # 对每个层级的特征进行加权融合
+            fused_out = []
+            for level_idx, level_features in enumerate(all_processed_features):
+                # 获取当前层级的加权融合结果
+                weight_param_names = [
+                    f'weight_modality_{i}' for i in range(num_modalities)
+                ]
+                weights = [
+                    torch.sigmoid(self.modality_weights[name])
+                    for name in weight_param_names
+                ]
+
+                # 归一化权重，确保它们的和为1
+                total_weight = sum(weights)
+                normalized_weights = [w / total_weight for w in weights]
+
+                # 加权求和
+                fused_feature = sum(
+                    w * f for w, f in zip(normalized_weights, level_features))
+                fused_out.append(fused_feature)
+
+            return fused_out
 
 
 class DPTHead(nn.Module):

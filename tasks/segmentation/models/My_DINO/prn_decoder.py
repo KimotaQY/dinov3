@@ -54,17 +54,32 @@ class SqueezeAndExcitation(nn.Module):
 
 class SEFusion(nn.Module):
 
-    def __init__(self, channels_in, activation=nn.ReLU(inplace=True)):
+    def __init__(self,
+                 channels_in,
+                 activation=nn.ReLU(inplace=True),
+                 num_modalities: int = 2):
         super(SEFusion, self).__init__()
 
-        self.se_rgb = SqueezeAndExcitation(channels_in, activation=activation)
-        self.se_depth = SqueezeAndExcitation(channels_in,
-                                             activation=activation)
+        # 动态创建指定数量的SqueezeAndExcitation模块
+        self.se_modules = nn.ModuleList([
+            SqueezeAndExcitation(channels_in, activation=activation)
+            for _ in range(num_modalities)
+        ])
 
-    def forward(self, rgb, depth):
-        rgb = self.se_rgb(rgb)
-        depth = self.se_depth(depth)
-        out = rgb + depth
+    def forward(self, *modalities):
+        # 检查输入模态数量是否与初始化时定义的数量一致
+        if len(modalities) != len(self.se_modules):
+            raise ValueError(
+                f"Expected {len(self.se_modules)} modalities, got {len(modalities)}"
+            )
+
+        # 对每个模态应用对应的SE模块并累加
+        outputs = []
+        for se_module, modality in zip(self.se_modules, modalities):
+            outputs.append(se_module(modality))
+
+        # 将所有处理后的模态相加
+        out = sum(outputs)
         return out
 
 
@@ -95,7 +110,7 @@ class ProgressiveRefinementNeck(nn.Module):
                       channels_list[1],
                       3,
                       padding=1),  # P2->P3
-            nn.Conv2d(channels_list[1] * 2 + channels_list[0],
+            nn.Conv2d(channels_list[1] + channels_list[0] * 2,
                       channels_list[0],
                       3,
                       padding=1)  # P3->P2
@@ -114,7 +129,7 @@ class ProgressiveRefinementNeck(nn.Module):
                                      channels_list[1],
                                      3,
                                      padding=1)
-        self.out_convs_4 = nn.Conv2d(channels_list[2],
+        self.out_convs_4 = nn.Conv2d(channels_list[0],
                                      channels_list[2],
                                      3,
                                      padding=1)
@@ -154,8 +169,11 @@ class ProgressiveRefinementNeck(nn.Module):
                 [self.resize(P2_refine, P3_in.shape[-2:]), P3_in], dim=1))
 
             # 上采样P3_td1并与P2_td、P2_in拼接 (对应公式3)
-            P2_refine = self.reuse_convs[1](torch.cat(
-                [self.resize(P3_td1, P2_in.shape[-2:]), P2_td, P2_in], dim=1))
+            resize_ = self.resize(P3_td1, P2_in.shape[-2:])
+            cat_feature = torch.cat([resize_, P2_td, P2_in], dim=1)
+            P2_refine = self.reuse_convs[1](cat_feature)
+            # P2_refine = self.reuse_convs[1](torch.cat(
+            #     [self.resize(P3_td1, P2_in.shape[-2:]), P2_td, P2_in], dim=1))
 
         # === 步骤3: 输出生成 (对应公式4-6) ===
         # P4_out: 从精化后的P2下采样得到
@@ -174,126 +192,71 @@ class ProgressiveRefinementNeck(nn.Module):
         return [P2_out, P3_out, P4_out]
 
 
-class PRNDecoder(nn.Module):
+class Decoder(nn.Module):
 
     def __init__(
         self,
         n_classes,
         in_channels=[256, 512, 1024, 1024],
         out_channels=256,
+        num_modalities: int = 1,
     ):
         super().__init__()
 
         self.in_channels = in_channels  # 1024
         self.out_channels = out_channels  # 1024 // 8 = 128
-        # self.inter_layers = inter_layers
-
-        inner_channels = [
-            out_channels,
-            out_channels // 2,
-            out_channels // 4,
-            out_channels // 8,
-        ]
+        self.num_modalities = num_modalities  # 存储模态数量
 
         # TODO: change the input channels
         self.frm = FeatureReinforcementModule([in_channels[0]] + in_channels,
                                               out_channels)
 
-        self.fusion1 = SEFusion(out_channels)
-        self.fusion2 = SEFusion(out_channels)
-        self.fusion3 = SEFusion(out_channels)
-        self.fusion4 = SEFusion(out_channels)
+        if num_modalities > 1:
+            # 当有多个模态时，为每一层创建对应的SEFusion模块
+            self.fusion1 = SEFusion(out_channels,
+                                    num_modalities=num_modalities)
+            self.fusion2 = SEFusion(out_channels,
+                                    num_modalities=num_modalities)
+            self.fusion3 = SEFusion(out_channels,
+                                    num_modalities=num_modalities)
+            self.fusion4 = SEFusion(out_channels,
+                                    num_modalities=num_modalities)
 
         self.neck = ProgressiveRefinementNeck(channels_list=[out_channels] * 4,
                                               num_stages=1)
 
         self.out_conv = ConvBNReLU(out_channels, n_classes, 1, pad=0)
 
-    def forward(self, x, y=None):
-        if y is None:
+    def forward(self, *modalities):
+        if len(modalities) == 1:
+            # 单模态情况：仅使用第一个模态
+            x = modalities[0]
             features = self.frm(*x)
-
             p2, p3, p4 = self.neck(features)
-        else:
-            x2, x3, x4, x5 = self.frm(*x)
-            y2, y3, y4, y5 = self.frm(*y)
+        elif len(modalities) > 1 and self.num_modalities > 1 and len(
+                modalities) == self.num_modalities:
+            features_list = []
+            for modality in modalities:
+                features = self.frm(*modality)
+                features_list.append(features)
 
-            ff1 = self.fusion1(x2, y2)
-            ff2 = self.fusion2(x3, y3)
-            ff3 = self.fusion3(x4, y4)
-            ff4 = self.fusion4(x5, y5)
+            all_x2 = [features[0] for features in features_list]
+            all_x3 = [features[1] for features in features_list]
+            all_x4 = [features[2] for features in features_list]
+            all_x5 = [features[3] for features in features_list]
 
-            features = (ff1, ff2, ff3, ff4)
-
-            # features = [self.pki_block(f) for f in features]
-
-            # features = [self.gcbam0(f) for f in features]
-            # features = [self.cbam(f) for f in features]
-
-            p2, p3, p4 = self.neck(features)
-
-        # 提升输出结果分辨率
-        # x = self.fusion1(p3, p4)
-        # x = self.conv2(x)
-        # x = self.fusion2(self.inter_conv2(p2), x)
-        # x = self.conv3(x)
-        # x = self.conv4(self.inter_conv3(features[0]) + x)
-
-        # x = self.fusion3(x, self.conv4(features[-1]))
-
-        # x = features[-1]
-
-        # x = self.fusion1(features[-2], x)  # 256
-        # x = self.conv2(x)
-        # x = self.fusion2(self.inter_conv1(features[-3]), x)  # 128
-        # x = self.conv3(x)
-        # x = self.fusion3(self.inter_conv2(features[-4]), x)  # 64
-        # x = self.conv4(x)
-
-        # return self.conv5(x)
-        return self.out_conv(p2)
-
-
-class Decoder_PRN(nn.Module):
-
-    def __init__(
-        self,
-        n_classes,
-        in_channels=[256, 512, 1024, 1024],
-        out_channels=256,
-    ):
-        super().__init__()
-
-        self.in_channels = in_channels  # 1024
-        self.out_channels = out_channels  # 1024 // 8 = 128
-
-        self.fusion1 = SEFusion(in_channels[0])
-        self.fusion2 = SEFusion(in_channels[1])
-        self.fusion3 = SEFusion(in_channels[2])
-        self.fusion4 = SEFusion(in_channels[3])
-
-        self.neck = ProgressiveRefinementNeck(channels_list=in_channels,
-                                              num_stages=1)
-
-        self.out_conv = ConvBNReLU(in_channels[0], n_classes, 1, pad=0)
-
-    def forward(self, x, y=None):
-        if y is None:
-            features = x
-
-            p2, p3, p4 = self.neck(features)
-        else:
-            x2, x3, x4, x5 = x
-            y2, y3, y4, y5 = y
-
-            ff1 = self.fusion1(x2, y2)
-            ff2 = self.fusion2(x3, y3)
-            ff3 = self.fusion3(x4, y4)
-            ff4 = self.fusion4(x5, y5)
+            ff1 = self.fusion1(*all_x2)
+            ff2 = self.fusion2(*all_x3)
+            ff3 = self.fusion3(*all_x4)
+            ff4 = self.fusion4(*all_x5)
 
             features = (ff1, ff2, ff3, ff4)
 
             p2, p3, p4 = self.neck(features)
+        else:
+            raise ValueError(
+                f"Invalid number of modalities: {len(modalities)}, expected {self.num_modalities}"
+            )
 
         return self.out_conv(p2)
 
@@ -305,25 +268,24 @@ class Decoder_FRM(nn.Module):
         n_classes,
         in_channels=[256, 512, 1024, 1024],
         out_channels=256,
+        num_modalities: int = 1,
     ):
         super().__init__()
 
         self.in_channels = in_channels  # 1024
         self.out_channels = out_channels  # 1024 // 8 = 128
+        self.num_modalities = num_modalities  # 存储模态数量
 
         # TODO: change the input channels
         self.frm = FeatureReinforcementModule([in_channels[0]] + in_channels,
                                               out_channels)
 
-        self.fusion1 = SEFusion(out_channels)
-        self.fusion2 = SEFusion(out_channels)
-        self.fusion3 = SEFusion(out_channels)
-        self.fusion4 = SEFusion(out_channels)
-
         self.out_conv = ConvBNReLU(out_channels, n_classes, 1, pad=0)
 
-    def forward(self, x, y=None):
-        if y is None:
+    def forward(self, *modalities):
+        if len(modalities) == 1:
+            # 单模态情况：仅使用第一个模态
+            x = modalities[0]
             features = self.frm(*x)
             x1, x2, x3, x4 = features
 
@@ -335,15 +297,22 @@ class Decoder_FRM(nn.Module):
                     size=(H, W),
                     mode="bilinear",
                 )
+        elif len(modalities) > 1 and self.num_modalities > 1 and len(
+                modalities) == self.num_modalities:
+            features_list = []
+            for modality in modalities:
+                features = self.frm(*modality)
+                features_list.append(features)
 
-        else:
-            x2, x3, x4, x5 = self.frm(*x)
-            y2, y3, y4, y5 = self.frm(*y)
+            all_x2 = [features[0] for features in features_list]
+            all_x3 = [features[1] for features in features_list]
+            all_x4 = [features[2] for features in features_list]
+            all_x5 = [features[3] for features in features_list]
 
-            ff1 = self.fusion1(x2, y2)
-            ff2 = self.fusion2(x3, y3)
-            ff3 = self.fusion3(x4, y4)
-            ff4 = self.fusion4(x5, y5)
+            ff1 = sum(all_x2)
+            ff2 = sum(all_x3)
+            ff3 = sum(all_x4)
+            ff4 = sum(all_x5)
 
             H, W = ff1.shape[2:]
             p2 = ff1
@@ -353,6 +322,297 @@ class Decoder_FRM(nn.Module):
                     size=(H, W),
                     mode="bilinear",
                 )
+        else:
+            raise ValueError(
+                f"Invalid number of modalities: {len(modalities)}, expected {self.num_modalities}"
+            )
+
+        return self.out_conv(p2)
+
+
+class Decoder_FRM_MMFF(nn.Module):
+
+    def __init__(
+        self,
+        n_classes,
+        in_channels=[256, 512, 1024, 1024],
+        out_channels=256,
+        num_modalities: int = 1,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels  # 1024
+        self.out_channels = out_channels  # 1024 // 8 = 128
+        self.num_modalities = num_modalities  # 存储模态数量
+
+        # TODO: change the input channels
+        self.frm = FeatureReinforcementModule([in_channels[0]] + in_channels,
+                                              out_channels)
+
+        if num_modalities > 1:
+            # 当有多个模态时，为每一层创建对应的SEFusion模块
+            self.fusion1 = SEFusion(out_channels,
+                                    num_modalities=num_modalities)
+            self.fusion2 = SEFusion(out_channels,
+                                    num_modalities=num_modalities)
+            self.fusion3 = SEFusion(out_channels,
+                                    num_modalities=num_modalities)
+            self.fusion4 = SEFusion(out_channels,
+                                    num_modalities=num_modalities)
+
+        self.out_conv = ConvBNReLU(out_channels, n_classes, 1, pad=0)
+
+    def forward(self, *modalities):
+        if len(modalities) == 1:
+            # 单模态情况：仅使用第一个模态
+            x = modalities[0]
+            features = self.frm(*x)
+            x1, x2, x3, x4 = features
+
+            H, W = x1.shape[2:]
+            p2 = x1
+            for _x in [x2, x3, x4]:
+                p2 = p2 + F.interpolate(
+                    _x,
+                    size=(H, W),
+                    mode="bilinear",
+                )
+        elif len(modalities) > 1 and self.num_modalities > 1 and len(
+                modalities) == self.num_modalities:
+            features_list = []
+            for modality in modalities:
+                features = self.frm(*modality)
+                features_list.append(features)
+
+            all_x2 = [features[0] for features in features_list]
+            all_x3 = [features[1] for features in features_list]
+            all_x4 = [features[2] for features in features_list]
+            all_x5 = [features[3] for features in features_list]
+
+            ff1 = self.fusion1(*all_x2)
+            ff2 = self.fusion2(*all_x3)
+            ff3 = self.fusion3(*all_x4)
+            ff4 = self.fusion4(*all_x5)
+
+            H, W = ff1.shape[2:]
+            p2 = ff1
+            for _x in [ff2, ff3, ff4]:
+                p2 = p2 + F.interpolate(
+                    _x,
+                    size=(H, W),
+                    mode="bilinear",
+                )
+        else:
+            raise ValueError(
+                f"Invalid number of modalities: {len(modalities)}, expected {self.num_modalities}"
+            )
+
+        return self.out_conv(p2)
+
+
+class Decoder_PRN(nn.Module):
+
+    def __init__(
+        self,
+        n_classes,
+        in_channels=[256, 512, 1024, 1024],
+        out_channels=256,
+        num_modalities: int = 1,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels  # 1024
+        self.out_channels = out_channels  # 1024 // 8 = 128
+        self.num_modalities = num_modalities  # 存储模态数量
+
+        self.neck = ProgressiveRefinementNeck(channels_list=in_channels,
+                                              num_stages=1)
+
+        self.out_conv = ConvBNReLU(in_channels[0], n_classes, 1, pad=0)
+
+    def forward(self, *modalities):
+        if len(modalities) == 1:
+            # 单模态情况：仅使用第一个模态
+            features = modalities[0]
+            p2, p3, p4 = self.neck(features)
+        elif len(modalities) > 1 and self.num_modalities > 1 and len(
+                modalities) == self.num_modalities:
+            features_list = []
+            for modality in modalities:
+                features = modality
+                features_list.append(features)
+
+            all_x2 = [features[0] for features in features_list]
+            all_x3 = [features[1] for features in features_list]
+            all_x4 = [features[2] for features in features_list]
+            all_x5 = [features[3] for features in features_list]
+
+            ff1 = sum(all_x2)
+            ff2 = sum(all_x3)
+            ff3 = sum(all_x4)
+            ff4 = sum(all_x5)
+
+            features = (ff1, ff2, ff3, ff4)
+
+            p2, p3, p4 = self.neck(features)
+        else:
+            raise ValueError(
+                f"Invalid number of modalities: {len(modalities)}, expected {self.num_modalities}"
+            )
+
+        return self.out_conv(p2)
+
+
+class Decoder_PRN_MMFF(nn.Module):
+
+    def __init__(
+        self,
+        n_classes,
+        in_channels=[256, 512, 1024, 1024],
+        out_channels=256,
+        num_modalities: int = 1,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels  # 1024
+        self.out_channels = out_channels  # 1024 // 8 = 128
+        self.num_modalities = num_modalities  # 存储模态数量
+
+        if num_modalities > 1:
+            # 当有多个模态时，为每一层创建对应的SEFusion模块
+            self.fusion1 = SEFusion(in_channels[0],
+                                    num_modalities=num_modalities)
+            self.fusion2 = SEFusion(in_channels[1],
+                                    num_modalities=num_modalities)
+            self.fusion3 = SEFusion(in_channels[2],
+                                    num_modalities=num_modalities)
+            self.fusion4 = SEFusion(in_channels[3],
+                                    num_modalities=num_modalities)
+
+        self.neck = ProgressiveRefinementNeck(channels_list=in_channels,
+                                              num_stages=1)
+
+        self.out_conv = ConvBNReLU(in_channels[0], n_classes, 1, pad=0)
+
+    def forward(self, *modalities):
+        if len(modalities) == 1:
+            # 单模态情况：仅使用第一个模态
+            features = modalities[0]
+            p2, p3, p4 = self.neck(features)
+        elif len(modalities) > 1 and self.num_modalities > 1 and len(
+                modalities) == self.num_modalities:
+            features_list = []
+            for modality in modalities:
+                features = modality
+                features_list.append(features)
+
+            all_x2 = [features[0] for features in features_list]
+            all_x3 = [features[1] for features in features_list]
+            all_x4 = [features[2] for features in features_list]
+            all_x5 = [features[3] for features in features_list]
+
+            ff1 = self.fusion1(*all_x2)
+            ff2 = self.fusion2(*all_x3)
+            ff3 = self.fusion3(*all_x4)
+            ff4 = self.fusion4(*all_x5)
+
+            features = (ff1, ff2, ff3, ff4)
+
+            p2, p3, p4 = self.neck(features)
+        else:
+            raise ValueError(
+                f"Invalid number of modalities: {len(modalities)}, expected {self.num_modalities}"
+            )
+
+        return self.out_conv(p2)
+
+
+class Decoder_MMFF(nn.Module):
+
+    def __init__(
+        self,
+        n_classes,
+        in_channels=[256, 512, 1024, 1024],
+        out_channels=256,
+        num_modalities: int = 1,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels  # 1024
+        self.out_channels = out_channels  # 1024 // 8 = 128
+        self.num_modalities = num_modalities  # 存储模态数量
+
+        if num_modalities > 1:
+            # 当有多个模态时，为每一层创建对应的SEFusion模块
+            self.fusion1 = SEFusion(in_channels[0],
+                                    num_modalities=num_modalities)
+            self.fusion2 = SEFusion(in_channels[1],
+                                    num_modalities=num_modalities)
+            self.fusion3 = SEFusion(in_channels[2],
+                                    num_modalities=num_modalities)
+            self.fusion4 = SEFusion(in_channels[3],
+                                    num_modalities=num_modalities)
+
+        self.conv_1 = ConvBNReLU(in_channels[0], out_channels, 1, pad=0)
+        self.conv_2 = ConvBNReLU(in_channels[1], out_channels, 1, pad=0)
+        self.conv_3 = ConvBNReLU(in_channels[2], out_channels, 1, pad=0)
+        self.conv_4 = ConvBNReLU(in_channels[3], out_channels, 1, pad=0)
+
+        self.out_conv = ConvBNReLU(out_channels, n_classes, 1, pad=0)
+
+    def forward(self, *modalities):
+        if len(modalities) == 1:
+            # 单模态情况：仅使用第一个模态
+            x = modalities[0]
+
+            x_1 = self.conv_1(x[0])
+            x_2 = self.conv_2(x[1])
+            x_3 = self.conv_3(x[2])
+            x_4 = self.conv_4(x[3])
+
+            H, W = x_1.shape[2:]
+            for _x in [x_2, x_3, x_4]:
+                x_1 = x_1 + F.interpolate(
+                    _x,
+                    size=(H, W),
+                    mode="bilinear",
+                )
+
+            p2 = x_1
+        elif len(modalities) > 1 and self.num_modalities > 1 and len(
+                modalities) == self.num_modalities:
+            features_list = []
+            for modality in modalities:
+                features = modality
+                features_list.append(features)
+
+            all_x2 = [features[0] for features in features_list]
+            all_x3 = [features[1] for features in features_list]
+            all_x4 = [features[2] for features in features_list]
+            all_x5 = [features[3] for features in features_list]
+
+            ff1 = self.fusion1(*all_x2)
+            ff2 = self.fusion2(*all_x3)
+            ff3 = self.fusion3(*all_x4)
+            ff4 = self.fusion4(*all_x5)
+
+            ff1 = self.conv_1(ff1)
+            ff2 = self.conv_2(ff2)
+            ff3 = self.conv_3(ff3)
+            ff4 = self.conv_4(ff4)
+
+            H, W = ff1.shape[2:]
+            for _x in [ff2, ff3, ff4]:
+                ff1 = ff1 + F.interpolate(
+                    _x,
+                    size=(H, W),
+                    mode="bilinear",
+                )
+            p2 = ff1
+        else:
+            raise ValueError(
+                f"Invalid number of modalities: {len(modalities)}, expected {self.num_modalities}"
+            )
 
         return self.out_conv(p2)
 

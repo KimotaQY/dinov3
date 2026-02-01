@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from .prn_decoder import SEFusion
+# from .prn_decoder import SEFusion
 
 
 class LinearHead(nn.Module):
@@ -13,15 +13,20 @@ class LinearHead(nn.Module):
     ):
         super().__init__()
 
-        self.fusion = SEFusion(in_ch)
+        # self.fusion = SEFusion(in_ch)
 
         self.proj = nn.Conv2d(in_ch, n_classes, 1)
         self.up = nn.Upsample(scale_factor=2,
                               mode="bilinear",
                               align_corners=False)
 
-    def forward(self, x, y=None):  # fmap: [B, C, H, W]（步长16）
-        if y is None:
-            return self.up(self.proj(x))  # 输入分辨率的logits
+    def forward(self, *modalities):  # fmap: [B, C, H, W]（步长16）
+        if len(modalities) == 1:
+            x = modalities[0]
+            return self.up(self.proj(x[-1]))  # 输入分辨率的logits
         else:
-            return self.up(self.proj(self.fusion(x, y)))
+            features_list = []
+            for modality in modalities:
+                features = modality
+                features_list.append(features[-1])
+            return self.up(self.proj(sum(features_list)))

@@ -30,7 +30,7 @@ from utils.clean_logs import clean_logs
 from configs import get_cfg
 
 DATASET_NAME = "Vaihingen"
-MODEL_NAME = "ESANet"
+MODEL_NAME = "DINOv3_wo_MMFF"
 
 
 def get_local_rank():
@@ -41,7 +41,7 @@ def get_local_rank():
         return 0
 
 
-def main():
+def main(**kwargs):
     try:
         # 初始化分布式训练环境
         distributed.enable(overwrite=True)
@@ -55,7 +55,7 @@ def main():
         os.environ['MASTER_PORT'] = '12355'
 
     # 获取模型配置
-    cfg = get_cfg(MODEL_NAME, DATASET_NAME)
+    cfg = get_cfg(MODEL_NAME, DATASET_NAME, **kwargs)
     window_size = cfg.get('window_size')
     batch_size = cfg.get('batch_size')
     model = cfg.get('model')
@@ -361,4 +361,20 @@ def test(model, test_loader, cfg):
 
 
 if __name__ == "__main__":
-    main()
+    modules = [
+        "DINOv3_Baseline",
+        "DINOv3_FRM",
+        "DINOv3_PRN",
+        "DINOv3_MMFF",
+        "DINOv3_FRM_MMFF",
+        "DINOv3_PRN_MMFF",
+        "DINOv3_Adapter_FRM",
+        "DINOv3_Adapter_PRN",
+        "DINOv3_Adapter_MMFF",
+        "DINOv3_Adapter_FRM_MMFF",
+        "DINOv3_Adapter_PRN_MMFF",
+        "DINOv3",
+    ]
+    for module in modules:
+        MODEL_NAME = module
+        main(num_modalities=2)

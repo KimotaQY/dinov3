@@ -11,14 +11,14 @@ from .MultiSenseSeg import get_cfg as get_MultiSenseSeg_cfg
 from .ESANet import get_cfg as get_ESANet_cfg
 
 
-def get_cfg(model_name=None, dataset_name=None):
+def get_cfg(model_name=None, dataset_name=None, **kwargs):
     if model_name is None:
         raise ValueError("Model name must be specified")
     if dataset_name is None:
         raise ValueError("Dataset name must be specified")
 
     if 'DINOv3' in model_name:
-        cfg = get_DINOv3_cfg(model_name, dataset_name)
+        cfg = get_DINOv3_cfg(model_name, dataset_name, **kwargs)
     elif model_name == 'UMFormer':
         cfg = get_UMFormer_cfg(dataset_name)
     elif model_name == 'SegDINO':

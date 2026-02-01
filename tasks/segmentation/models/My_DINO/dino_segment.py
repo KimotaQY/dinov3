@@ -9,7 +9,7 @@ from transformers import AutoImageProcessor, AutoModel
 
 from .linear_decoder import LinearHead
 from .fpn_decoder import FPNDecoder
-from .prn_decoder import PRNDecoder, Decoder_PRN, Decoder_FRM
+from .prn_decoder import Decoder, Decoder_FRM, Decoder_PRN, Decoder_MMFF, Decoder_FRM_MMFF, Decoder_PRN_MMFF
 from .sample_adapter import SampleAdapter
 from .lora import LoRA
 
@@ -33,26 +33,22 @@ BACKBONE_INTERMEDIATE_LAYERS = {
 }
 
 
-class DINOSegment(nn.Module):
+class DINOSegmentModule(nn.Module):
 
     def __init__(
-            self,
-            # model_name,
-            backbone_weights=None,
-            n_classes: int = 1000,
-            hidden_dim=2048,
-            window_size=(224, 224),
-            use_lora: bool = False,
-            r: int = 3,
+        self,
+        backbone_weights=None,
+        n_classes: int = 1000,
+        # window_size=(224, 224),
+        use_lora: bool = False,
+        r: int = 3,
+        decoder_type='Decoder',
+        adapter_type=None,
+        # backbone_type='dinov3_vitl16',
+        # lora_layers=None,
+        num_modalities: int = 1,
     ):
         super().__init__()
-
-        # self.processor = AutoImageProcessor.from_pretrained(model_name)
-        # if window_size is not None:
-        #     self.processor.size = {
-        #         'height': window_size[0],
-        #         'width': window_size[1]
-        #     }
 
         if backbone_weights is not None:
             self.backbone = dinov3_vitl16(weights=backbone_weights,
@@ -65,18 +61,37 @@ class DINOSegment(nn.Module):
 
         embed_dim = self.backbone.embed_dim
 
-        # self.backbone = DINOv3_Adapter(
-        #     self.backbone,
-        #     interaction_indexes=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"],
-        # )
-        # 更简单的adapter
-        self.adapter = SampleAdapter(embed_dim)
+        # 根据类型选择适配器
+        self.adapter = None
+        if adapter_type == 'SampleAdapter':
+            self.adapter = SampleAdapter(embed_dim,
+                                         num_modalities=num_modalities)
 
-        self.decoder = PRNDecoder(n_classes=n_classes)
-        # self.decoder = FPNDecoder(in_channels=embed_dim,
-        #                       out_channels=256,
-        #                       n_classes=n_classes)
-        # self.decoder = LinearHead(in_ch=embed_dim, n_classes=n_classes)
+        # 根据类型选择解码器
+        decoder_kwargs = {
+            "n_classes": n_classes,
+            "num_modalities": num_modalities
+        }
+        if adapter_type is None:
+            decoder_kwargs["in_channels"] = [embed_dim] * 4
+
+        if decoder_type == 'LinearHead':
+            self.decoder = LinearHead(in_ch=embed_dim, n_classes=n_classes)
+        elif decoder_type == 'Decoder':
+            self.decoder = Decoder(**decoder_kwargs)
+        elif decoder_type == 'Decoder_FRM':
+            self.decoder = Decoder_FRM(**decoder_kwargs)
+        elif decoder_type == 'Decoder_MMFF':
+            self.decoder = Decoder_MMFF(**decoder_kwargs)
+        elif decoder_type == 'Decoder_PRN':
+            self.decoder = Decoder_PRN(**decoder_kwargs)
+        elif decoder_type == 'Decoder_FRM_MMFF':
+            self.decoder = Decoder_FRM_MMFF(**decoder_kwargs)
+        elif decoder_type == 'Decoder_PRN_MMFF':
+            self.decoder = Decoder_PRN_MMFF(**decoder_kwargs)
+        else:
+            raise ValueError(f"Unknown decoder type: {decoder_type}")
+
         # Add LoRA layers to the encoder
         self.use_lora = use_lora
         if self.use_lora:
@@ -116,49 +131,78 @@ class DINOSegment(nn.Module):
         for w_b in self.w_b:
             nn.init.zeros_(w_b.weight)
 
-    def forward(self, x, y=None):
-        _, _, H, W = x.shape
+    def forward(self, *modalities):
+        if len(modalities) == 0:
+            raise ValueError("At least one modality must be provided")
+
+        # 主输入x
+        x = modalities[0]
+        _, C, H, W = x.shape
         patch_h, patch_w = x.shape[-2] // 16, x.shape[-1] // 16
 
-        if y is None:
-            # 使用DINOv3_Adapter时
-            # outputs = self.backbone.forward(inputs.data['pixel_values'])
-            # 多尺度特征
-            # multi_scale_features = [
-            #     outputs["1"],  # 高分辨率特征
-            #     outputs["2"],
-            #     outputs["3"],
-            #     outputs["4"]  # 低分辨率特征
-            # ]
+        scale_factors = [4, 2, 1, 0.5]
 
-            # 使用SampleAdapter时
+        if len(modalities) == 1:
             outputs = self.backbone.get_intermediate_layers(
                 x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
 
-            multi_scale_features = self.adapter(outputs,
-                                                patch_h=patch_h,
-                                                patch_w=patch_w)
+            if self.adapter is not None:
+                # 使用适配器处理多尺度特征
+                multi_scale_features = self.adapter(outputs,
+                                                    patch_h=patch_h,
+                                                    patch_w=patch_w)
+            else:
+                # 直接处理中间层输出
+                multi_scale_features = []
+                for i, output in enumerate(outputs):
+                    output = output.permute(0, 2, 1).reshape(
+                        (output.shape[0], output.shape[-1], patch_h, patch_w))
+
+                    if i < len(scale_factors):
+                        output = F.interpolate(output,
+                                               scale_factor=scale_factors[i],
+                                               mode="bilinear",
+                                               align_corners=False)
+                    multi_scale_features.append(output)
 
             logits = self.decoder(multi_scale_features)
 
-            # pixel_decoder + fpn
-            # _, _, multi_scale_features = self.pixel_decoder.forward_features(
-            #     outputs)
-            # logits = self.fpn(multi_scale_features[::-1])
         else:
-            y = y.repeat(
-                1, 3, 1, 1
-            )  # (batch_size, 1, height, width) → (batch_size, 3, height, width)
-            outputs_x = self.backbone.get_intermediate_layers(
-                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-            outputs_y = self.backbone.get_intermediate_layers(
-                y, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
+            all_processed_outputs = []
 
-            multi_scale_features_x, multi_scale_features_y = self.adapter(
-                outputs_x, outputs_y, patch_h, patch_w)
+            for idx, modality_input in enumerate(modalities):
+                if modality_input.shape[1] != C and idx > 0:
+                    modality_input = modality_input.repeat(1, C, 1, 1)
 
-            logits = self.decoder(multi_scale_features_x,
-                                  multi_scale_features_y)
+                outputs_modality = self.backbone.get_intermediate_layers(
+                    modality_input,
+                    n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
+
+                if self.adapter is not None:
+                    # 使用适配器处理多尺度特征
+                    processed_outputs_modality = self.adapter(outputs_modality,
+                                                              patch_h=patch_h,
+                                                              patch_w=patch_w)
+                else:
+                    # 直接处理中间层输出
+                    processed_outputs_modality = []
+                    for i, output in enumerate(outputs_modality):
+                        output = output.permute(0, 2, 1).reshape(
+                            (output.shape[0], output.shape[-1], patch_h,
+                             patch_w))
+
+                        if i < len(scale_factors):
+                            output = F.interpolate(
+                                output,
+                                scale_factor=scale_factors[i],
+                                mode="bilinear",
+                                align_corners=False)
+                        processed_outputs_modality.append(output)
+
+                all_processed_outputs.append(processed_outputs_modality)
+
+            # 将处理后的所有模态特征传递给解码器
+            logits = self.decoder(*all_processed_outputs)
 
         _H, _W = logits.shape[2:]
         if _H != H or _W != W:
@@ -172,600 +216,119 @@ class DINOSegment(nn.Module):
         return pred
 
 
-class DINOSegment_Linear(nn.Module):
+def build_model(
+    model_name=None,
+    backbone_weights=None,
+    n_classes: int = 1000,
+    use_lora: bool = False,
+    r: int = 3,
+    num_modalities: int = 1,
+):
+    if model_name == 'DINOv3' or model_name is None:
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  adapter_type="SampleAdapter",
+                                  decoder_type="Decoder")
+    elif model_name == 'DINOv3_Adapter_FRM':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  adapter_type="SampleAdapter",
+                                  decoder_type="Decoder_FRM")
+    elif model_name == 'DINOv3_Adapter_PRN':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  adapter_type="SampleAdapter",
+                                  decoder_type="Decoder_PRN")
+    elif model_name == 'DINOv3_Adapter_MMFF':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  adapter_type="SampleAdapter",
+                                  decoder_type="Decoder_MMFF")
+    elif model_name == 'DINOv3_Adapter_FRM_MMFF':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  adapter_type="SampleAdapter",
+                                  decoder_type="Decoder_FRM_MMFF")
+    elif model_name == 'DINOv3_Adapter_PRN_MMFF':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  adapter_type="SampleAdapter",
+                                  decoder_type="Decoder_PRN_MMFF")
+    elif model_name == 'DINOv3_FRM':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  decoder_type="Decoder_FRM")
+    elif model_name == 'DINOv3_PRN':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  decoder_type="Decoder_PRN")
+    elif model_name == 'DINOv3_MMFF':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  decoder_type="Decoder_MMFF")
+    elif model_name == 'DINOv3_FRM_MMFF':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  decoder_type="Decoder_FRM_MMFF")
+    elif model_name == 'DINOv3_PRN_MMFF':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  decoder_type="Decoder_PRN_MMFF")
+    elif model_name == 'DINOv3_Baseline':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  decoder_type="LinearHead")
+
+    return model
+
 
-    def __init__(
-        self,
-        backbone_weights=None,
-        n_classes: int = 1000,
-        use_lora: bool = False,
-        r: int = 3,
-    ):
-        super().__init__()
+if __name__ == "__main__":
+    backbone_weights = "/home/yyyjvm/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
+    model = build_model(backbone_weights=backbone_weights,
+                        n_classes=6,
+                        use_lora=False,
+                        r=3,
+                        num_modalities=2)
+    x = torch.randn(1, 3, 224, 224).cuda()
+    y = torch.randn(1, 3, 224, 224).cuda()
 
-        if backbone_weights is not None:
-            self.backbone = dinov3_vitl16(weights=backbone_weights,
-                                          pretrained=True)
-        else:
-            self.backbone = dinov3_vitl16(pretrained=False)
+    model = model.cuda()
+    output = model(x, y)
 
-        # Important: we freeze the backbone
-        self.backbone.requires_grad_(False)
-
-        embed_dim = self.backbone.embed_dim
-
-        self.decoder = LinearHead(in_ch=embed_dim, n_classes=n_classes)
-        # Add LoRA layers to the encoder
-        self.use_lora = use_lora
-        if self.use_lora:
-            self.lora_layers = list(range(len(self.backbone.blocks)))
-            self.w_a = []
-            self.w_b = []
-
-            for i, block in enumerate(self.backbone.blocks):
-                if i not in self.lora_layers:
-                    continue
-                w_qkv_linear = block.attn.qkv
-                dim = w_qkv_linear.in_features
-
-                w_a_linear_q, w_b_linear_q = self._create_lora_layer(dim, r)
-                w_a_linear_v, w_b_linear_v = self._create_lora_layer(dim, r)
-
-                self.w_a.extend([w_a_linear_q, w_a_linear_v])
-                self.w_b.extend([w_b_linear_q, w_b_linear_v])
-
-                block.attn.qkv = LoRA(
-                    w_qkv_linear,
-                    w_a_linear_q,
-                    w_b_linear_q,
-                    w_a_linear_v,
-                    w_b_linear_v,
-                )
-            self._reset_lora_parameters()
-
-    def _create_lora_layer(self, dim: int, r: int):
-        w_a = nn.Linear(dim, r, bias=False)
-        w_b = nn.Linear(r, dim, bias=False)
-        return w_a, w_b
-
-    def _reset_lora_parameters(self) -> None:
-        for w_a in self.w_a:
-            nn.init.kaiming_uniform_(w_a.weight, a=math.sqrt(5))
-        for w_b in self.w_b:
-            nn.init.zeros_(w_b.weight)
-
-    def forward(self, x, y=None):
-        _, _, H, W = x.shape
-        patch_h, patch_w = x.shape[-2] // 16, x.shape[-1] // 16
-
-        if y is None:
-            outputs = self.backbone.get_intermediate_layers(
-                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-
-            x = outputs[-1]
-            x = x.permute(0, 2, 1).reshape(
-                (x.shape[0], x.shape[-1], patch_h, patch_w))
-
-            logits = self.decoder(x)
-
-        else:
-            y = y.repeat(
-                1, 3, 1, 1
-            )  # (batch_size, 1, height, width) → (batch_size, 3, height, width)
-            outputs_x = self.backbone.get_intermediate_layers(
-                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-            outputs_y = self.backbone.get_intermediate_layers(
-                y, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-
-            x = outputs_x[-1]
-            y = outputs_y[-1]
-            x = x.permute(0, 2, 1).reshape(
-                (x.shape[0], x.shape[-1], patch_h, patch_w))
-            y = y.permute(0, 2, 1).reshape(
-                (y.shape[0], y.shape[-1], patch_h, patch_w))
-
-            logits = self.decoder(x, y)
-
-        _H, _W = logits.shape[2:]
-        if _H != H or _W != W:
-            # 确保输出大小与输入一致
-            pred = F.interpolate(
-                logits,
-                size=(H, W),
-                mode="bilinear",
-            )
-
-        return pred
-
-
-class DINOSegment_Adapter(nn.Module):
-
-    def __init__(
-        self,
-        backbone_weights=None,
-        n_classes: int = 1000,
-        use_lora: bool = False,
-        r: int = 3,
-    ):
-        super().__init__()
-
-        if backbone_weights is not None:
-            self.backbone = dinov3_vitl16(weights=backbone_weights,
-                                          pretrained=True)
-        else:
-            self.backbone = dinov3_vitl16(pretrained=False)
-
-        # Important: we freeze the backbone
-        self.backbone.requires_grad_(False)
-
-        embed_dim = self.backbone.embed_dim
-
-        # 更简单的adapter
-        self.adapter = SampleAdapter(embed_dim)
-
-        self.decoder = LinearHead(in_ch=embed_dim, n_classes=n_classes)
-        # Add LoRA layers to the encoder
-        self.use_lora = use_lora
-        if self.use_lora:
-            self.lora_layers = list(range(len(self.backbone.blocks)))
-            self.w_a = []
-            self.w_b = []
-
-            for i, block in enumerate(self.backbone.blocks):
-                if i not in self.lora_layers:
-                    continue
-                w_qkv_linear = block.attn.qkv
-                dim = w_qkv_linear.in_features
-
-                w_a_linear_q, w_b_linear_q = self._create_lora_layer(dim, r)
-                w_a_linear_v, w_b_linear_v = self._create_lora_layer(dim, r)
-
-                self.w_a.extend([w_a_linear_q, w_a_linear_v])
-                self.w_b.extend([w_b_linear_q, w_b_linear_v])
-
-                block.attn.qkv = LoRA(
-                    w_qkv_linear,
-                    w_a_linear_q,
-                    w_b_linear_q,
-                    w_a_linear_v,
-                    w_b_linear_v,
-                )
-            self._reset_lora_parameters()
-
-    def _create_lora_layer(self, dim: int, r: int):
-        w_a = nn.Linear(dim, r, bias=False)
-        w_b = nn.Linear(r, dim, bias=False)
-        return w_a, w_b
-
-    def _reset_lora_parameters(self) -> None:
-        for w_a in self.w_a:
-            nn.init.kaiming_uniform_(w_a.weight, a=math.sqrt(5))
-        for w_b in self.w_b:
-            nn.init.zeros_(w_b.weight)
-
-    def forward(self, x, y=None):
-        _, _, H, W = x.shape
-        patch_h, patch_w = x.shape[-2] // 16, x.shape[-1] // 16
-
-        if y is None:
-            outputs = self.backbone.get_intermediate_layers(
-                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-
-            multi_scale_features = self.adapter(outputs,
-                                                patch_h=patch_h,
-                                                patch_w=patch_w)
-
-            logits = self.decoder(multi_scale_features[-1])
-
-        else:
-            y = y.repeat(
-                1, 3, 1, 1
-            )  # (batch_size, 1, height, width) → (batch_size, 3, height, width)
-            outputs_x = self.backbone.get_intermediate_layers(
-                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-            outputs_y = self.backbone.get_intermediate_layers(
-                y, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-
-            multi_scale_features_x, multi_scale_features_y = self.adapter(
-                outputs_x, outputs_y, patch_h, patch_w)
-
-            logits = self.decoder(multi_scale_features_x[-1],
-                                  multi_scale_features_y[-1])
-
-        _H, _W = logits.shape[2:]
-        if _H != H or _W != W:
-            # 确保输出大小与输入一致
-            pred = F.interpolate(
-                logits,
-                size=(H, W),
-                mode="bilinear",
-            )
-
-        return pred
-
-
-class DINOSegment_PRNDecoder(nn.Module):
-
-    def __init__(
-        self,
-        backbone_weights=None,
-        n_classes: int = 1000,
-        use_lora: bool = False,
-        r: int = 3,
-    ):
-        super().__init__()
-
-        if backbone_weights is not None:
-            self.backbone = dinov3_vitl16(weights=backbone_weights,
-                                          pretrained=True)
-        else:
-            self.backbone = dinov3_vitl16(pretrained=False)
-
-        # Important: we freeze the backbone
-        self.backbone.requires_grad_(False)
-
-        embed_dim = self.backbone.embed_dim
-
-        self.decoder = PRNDecoder(n_classes=n_classes,
-                                  in_channels=[embed_dim] * 4)
-
-        # Add LoRA layers to the encoder
-        self.use_lora = use_lora
-        if self.use_lora:
-            self.lora_layers = list(range(len(self.backbone.blocks)))
-            self.w_a = []
-            self.w_b = []
-
-            for i, block in enumerate(self.backbone.blocks):
-                if i not in self.lora_layers:
-                    continue
-                w_qkv_linear = block.attn.qkv
-                dim = w_qkv_linear.in_features
-
-                w_a_linear_q, w_b_linear_q = self._create_lora_layer(dim, r)
-                w_a_linear_v, w_b_linear_v = self._create_lora_layer(dim, r)
-
-                self.w_a.extend([w_a_linear_q, w_a_linear_v])
-                self.w_b.extend([w_b_linear_q, w_b_linear_v])
-
-                block.attn.qkv = LoRA(
-                    w_qkv_linear,
-                    w_a_linear_q,
-                    w_b_linear_q,
-                    w_a_linear_v,
-                    w_b_linear_v,
-                )
-            self._reset_lora_parameters()
-
-    def _create_lora_layer(self, dim: int, r: int):
-        w_a = nn.Linear(dim, r, bias=False)
-        w_b = nn.Linear(r, dim, bias=False)
-        return w_a, w_b
-
-    def _reset_lora_parameters(self) -> None:
-        for w_a in self.w_a:
-            nn.init.kaiming_uniform_(w_a.weight, a=math.sqrt(5))
-        for w_b in self.w_b:
-            nn.init.zeros_(w_b.weight)
-
-    def forward(self, x, y=None):
-        _, _, H, W = x.shape
-        patch_h, patch_w = x.shape[-2] // 16, x.shape[-1] // 16
-
-        scale_factors = [4, 2, 1, 0.5]
-        if y is None:
-            outputs = self.backbone.get_intermediate_layers(
-                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-
-            processed_outputs = []
-            for i, output in enumerate(outputs):
-                output = output.permute(0, 2, 1).reshape(
-                    (output.shape[0], output.shape[-1], patch_h, patch_w))
-
-                output = F.interpolate(output,
-                                       scale_factor=scale_factors[i],
-                                       mode="bilinear",
-                                       align_corners=False)
-                processed_outputs.append(output)
-
-            logits = self.decoder(processed_outputs)
-
-        else:
-            y = y.repeat(
-                1, 3, 1, 1
-            )  # (batch_size, 1, height, width) → (batch_size, 3, height, width)
-            outputs_x = self.backbone.get_intermediate_layers(
-                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-            outputs_y = self.backbone.get_intermediate_layers(
-                y, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-
-            processed_outputs_x = []
-            processed_outputs_y = []
-            for i, (output_x, output_y) in enumerate(zip(outputs_x,
-                                                         outputs_y)):
-                output_x = output_x.permute(0, 2, 1).reshape(
-                    (output_x.shape[0], output_x.shape[-1], patch_h, patch_w))
-                output_x = F.interpolate(output_x,
-                                         scale_factor=scale_factors[i],
-                                         mode="bilinear",
-                                         align_corners=False)
-                processed_outputs_x.append(output_x)
-
-                output_y = output_y.permute(0, 2, 1).reshape(
-                    (output_y.shape[0], output_y.shape[-1], patch_h, patch_w))
-                output_y = F.interpolate(output_y,
-                                         scale_factor=scale_factors[i],
-                                         mode="bilinear",
-                                         align_corners=False)
-                processed_outputs_y.append(output_y)
-
-            logits = self.decoder(processed_outputs_x, processed_outputs_y)
-
-        _H, _W = logits.shape[2:]
-        if _H != H or _W != W:
-            # 确保输出大小与输入一致
-            pred = F.interpolate(
-                logits,
-                size=(H, W),
-                mode="bilinear",
-            )
-
-        return pred
-
-
-class DINOSegment_Decoder_PRN(nn.Module):
-
-    def __init__(
-        self,
-        backbone_weights=None,
-        n_classes: int = 1000,
-        use_lora: bool = False,
-        r: int = 3,
-    ):
-        super().__init__()
-
-        if backbone_weights is not None:
-            self.backbone = dinov3_vitl16(weights=backbone_weights,
-                                          pretrained=True)
-        else:
-            self.backbone = dinov3_vitl16(pretrained=False)
-
-        # Important: we freeze the backbone
-        self.backbone.requires_grad_(False)
-
-        embed_dim = self.backbone.embed_dim
-
-        self.decoder = Decoder_PRN(n_classes=n_classes,
-                                   in_channels=[embed_dim] * 4)
-
-        # Add LoRA layers to the encoder
-        self.use_lora = use_lora
-        if self.use_lora:
-            self.lora_layers = list(range(len(self.backbone.blocks)))
-            self.w_a = []
-            self.w_b = []
-
-            for i, block in enumerate(self.backbone.blocks):
-                if i not in self.lora_layers:
-                    continue
-                w_qkv_linear = block.attn.qkv
-                dim = w_qkv_linear.in_features
-
-                w_a_linear_q, w_b_linear_q = self._create_lora_layer(dim, r)
-                w_a_linear_v, w_b_linear_v = self._create_lora_layer(dim, r)
-
-                self.w_a.extend([w_a_linear_q, w_a_linear_v])
-                self.w_b.extend([w_b_linear_q, w_b_linear_v])
-
-                block.attn.qkv = LoRA(
-                    w_qkv_linear,
-                    w_a_linear_q,
-                    w_b_linear_q,
-                    w_a_linear_v,
-                    w_b_linear_v,
-                )
-            self._reset_lora_parameters()
-
-    def _create_lora_layer(self, dim: int, r: int):
-        w_a = nn.Linear(dim, r, bias=False)
-        w_b = nn.Linear(r, dim, bias=False)
-        return w_a, w_b
-
-    def _reset_lora_parameters(self) -> None:
-        for w_a in self.w_a:
-            nn.init.kaiming_uniform_(w_a.weight, a=math.sqrt(5))
-        for w_b in self.w_b:
-            nn.init.zeros_(w_b.weight)
-
-    def forward(self, x, y=None):
-        _, _, H, W = x.shape
-        patch_h, patch_w = x.shape[-2] // 16, x.shape[-1] // 16
-
-        scale_factors = [4, 2, 1, 0.5]
-        if y is None:
-            outputs = self.backbone.get_intermediate_layers(
-                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-
-            processed_outputs = []
-            for i, output in enumerate(outputs):
-                output = output.permute(0, 2, 1).reshape(
-                    (output.shape[0], output.shape[-1], patch_h, patch_w))
-
-                output = F.interpolate(output,
-                                       scale_factor=scale_factors[i],
-                                       mode="bilinear",
-                                       align_corners=False)
-                processed_outputs.append(output)
-
-            logits = self.decoder(processed_outputs)
-
-        else:
-            y = y.repeat(
-                1, 3, 1, 1
-            )  # (batch_size, 1, height, width) → (batch_size, 3, height, width)
-            outputs_x = self.backbone.get_intermediate_layers(
-                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-            outputs_y = self.backbone.get_intermediate_layers(
-                y, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-
-            processed_outputs_x = []
-            processed_outputs_y = []
-            for i, (output_x, output_y) in enumerate(zip(outputs_x,
-                                                         outputs_y)):
-                output_x = output_x.permute(0, 2, 1).reshape(
-                    (output_x.shape[0], output_x.shape[-1], patch_h, patch_w))
-                output_x = F.interpolate(output_x,
-                                         scale_factor=scale_factors[i],
-                                         mode="bilinear",
-                                         align_corners=False)
-                processed_outputs_x.append(output_x)
-
-                output_y = output_y.permute(0, 2, 1).reshape(
-                    (output_y.shape[0], output_y.shape[-1], patch_h, patch_w))
-                output_y = F.interpolate(output_y,
-                                         scale_factor=scale_factors[i],
-                                         mode="bilinear",
-                                         align_corners=False)
-                processed_outputs_y.append(output_y)
-
-            logits = self.decoder(processed_outputs_x, processed_outputs_y)
-
-        _H, _W = logits.shape[2:]
-        if _H != H or _W != W:
-            # 确保输出大小与输入一致
-            pred = F.interpolate(
-                logits,
-                size=(H, W),
-                mode="bilinear",
-            )
-
-        return pred
-
-
-class DINOSegment_Decoder_FRM(nn.Module):
-
-    def __init__(
-        self,
-        backbone_weights=None,
-        n_classes: int = 1000,
-        use_lora: bool = False,
-        r: int = 3,
-    ):
-        super().__init__()
-
-        if backbone_weights is not None:
-            self.backbone = dinov3_vitl16(weights=backbone_weights,
-                                          pretrained=True)
-        else:
-            self.backbone = dinov3_vitl16(pretrained=False)
-
-        # Important: we freeze the backbone
-        self.backbone.requires_grad_(False)
-
-        embed_dim = self.backbone.embed_dim
-
-        self.decoder = Decoder_FRM(n_classes=n_classes,
-                                   in_channels=[embed_dim] * 4)
-
-        # Add LoRA layers to the encoder
-        self.use_lora = use_lora
-        if self.use_lora:
-            self.lora_layers = list(range(len(self.backbone.blocks)))
-            self.w_a = []
-            self.w_b = []
-
-            for i, block in enumerate(self.backbone.blocks):
-                if i not in self.lora_layers:
-                    continue
-                w_qkv_linear = block.attn.qkv
-                dim = w_qkv_linear.in_features
-
-                w_a_linear_q, w_b_linear_q = self._create_lora_layer(dim, r)
-                w_a_linear_v, w_b_linear_v = self._create_lora_layer(dim, r)
-
-                self.w_a.extend([w_a_linear_q, w_a_linear_v])
-                self.w_b.extend([w_b_linear_q, w_b_linear_v])
-
-                block.attn.qkv = LoRA(
-                    w_qkv_linear,
-                    w_a_linear_q,
-                    w_b_linear_q,
-                    w_a_linear_v,
-                    w_b_linear_v,
-                )
-            self._reset_lora_parameters()
-
-    def _create_lora_layer(self, dim: int, r: int):
-        w_a = nn.Linear(dim, r, bias=False)
-        w_b = nn.Linear(r, dim, bias=False)
-        return w_a, w_b
-
-    def _reset_lora_parameters(self) -> None:
-        for w_a in self.w_a:
-            nn.init.kaiming_uniform_(w_a.weight, a=math.sqrt(5))
-        for w_b in self.w_b:
-            nn.init.zeros_(w_b.weight)
-
-    def forward(self, x, y=None):
-        _, _, H, W = x.shape
-        patch_h, patch_w = x.shape[-2] // 16, x.shape[-1] // 16
-
-        scale_factors = [4, 2, 1, 0.5]
-        if y is None:
-            outputs = self.backbone.get_intermediate_layers(
-                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-
-            processed_outputs = []
-            for i, output in enumerate(outputs):
-                output = output.permute(0, 2, 1).reshape(
-                    (output.shape[0], output.shape[-1], patch_h, patch_w))
-
-                output = F.interpolate(output,
-                                       scale_factor=scale_factors[i],
-                                       mode="bilinear",
-                                       align_corners=False)
-                processed_outputs.append(output)
-
-            logits = self.decoder(processed_outputs)
-
-        else:
-            y = y.repeat(
-                1, 3, 1, 1
-            )  # (batch_size, 1, height, width) → (batch_size, 3, height, width)
-            outputs_x = self.backbone.get_intermediate_layers(
-                x, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-            outputs_y = self.backbone.get_intermediate_layers(
-                y, n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
-
-            processed_outputs_x = []
-            processed_outputs_y = []
-            for i, (output_x, output_y) in enumerate(zip(outputs_x,
-                                                         outputs_y)):
-                output_x = output_x.permute(0, 2, 1).reshape(
-                    (output_x.shape[0], output_x.shape[-1], patch_h, patch_w))
-                output_x = F.interpolate(output_x,
-                                         scale_factor=scale_factors[i],
-                                         mode="bilinear",
-                                         align_corners=False)
-                processed_outputs_x.append(output_x)
-
-                output_y = output_y.permute(0, 2, 1).reshape(
-                    (output_y.shape[0], output_y.shape[-1], patch_h, patch_w))
-                output_y = F.interpolate(output_y,
-                                         scale_factor=scale_factors[i],
-                                         mode="bilinear",
-                                         align_corners=False)
-                processed_outputs_y.append(output_y)
-
-            logits = self.decoder(processed_outputs_x, processed_outputs_y)
-
-        _H, _W = logits.shape[2:]
-        if _H != H or _W != W:
-            # 确保输出大小与输入一致
-            pred = F.interpolate(
-                logits,
-                size=(H, W),
-                mode="bilinear",
-            )
-
-        return pred
+    print(output.shape)
