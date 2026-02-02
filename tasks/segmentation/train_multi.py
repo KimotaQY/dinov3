@@ -361,20 +361,17 @@ def test(model, test_loader, cfg):
 
 
 if __name__ == "__main__":
-    modules = [
-        "DINOv3_Baseline",
-        "DINOv3_FRM",
-        "DINOv3_PRN",
-        "DINOv3_MMFF",
-        "DINOv3_FRM_MMFF",
-        "DINOv3_PRN_MMFF",
-        "DINOv3_Adapter_FRM",
-        "DINOv3_Adapter_PRN",
-        "DINOv3_Adapter_MMFF",
-        "DINOv3_Adapter_FRM_MMFF",
-        "DINOv3_Adapter_PRN_MMFF",
-        "DINOv3",
-    ]
-    for module in modules:
-        MODEL_NAME = module
-        main(num_modalities=2)
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Train segmentation model')
+    parser.add_argument('--model-name',
+                        type=str,
+                        default='DINOv3',
+                        help='Name of the model to train')
+    args = parser.parse_args()
+
+    # 如果提供了模型名称参数，使用它；否则使用默认值
+    if args.model_name:
+        MODEL_NAME = args.model_name
+
+    main(num_modalities=2)
