@@ -4,9 +4,9 @@ import sys
 import numpy as np
 import torch
 from PIL import Image
+from PIL import ImageOps
+import torchvision.transforms.functional as TF
 
-# deps_path = os.path.join(os.path.dirname(__file__), "task/segmentation")
-# sys.path.insert(0, deps_path)
 from utils.transform import *
 
 palette = {
@@ -21,17 +21,17 @@ palette = {
     5: (153, 153, 153),  # 中灰色
 
     # 【风电施工】→ 蓝色系
-    # 6: (18, 74, 143),  # 深蓝色
-    # 7: (125, 177, 230),  # 天蓝色
+    6: (18, 74, 143),  # 深蓝色
+    7: (125, 177, 230),  # 天蓝色
 
-    # # 【独立类别 - 高区分度配色】
-    # 8: (255, 191, 0),  # 琥珀色/金黄色
-    6: (54, 140, 48),  # 深绿色
-    7: (212, 50, 125),  # 洋红色/品红色
-    8: (128, 78, 191),  # 中等深度的紫色
-    9: (188, 155, 218),  # 浅薰衣草紫
-    10: (220, 60, 60),  # 鲜红色
-    11: (255, 255, 255)  # 白色
+    # 【独立类别 - 高区分度配色】
+    8: (255, 191, 0),  # 琥珀色/金黄色
+    9: (54, 140, 48),  # 深绿色
+    10: (212, 50, 125),  # 洋红色/品红色
+    11: (128, 78, 191),  # 中等深度的紫色
+    12: (188, 155, 218),  # 浅薰衣草紫
+    13: (220, 60, 60),  # 鲜红色
+    14: (255, 255, 255)  # 白色
 }
 
 invert_palette = {v: k for k, v in palette.items()}
@@ -44,11 +44,14 @@ class YYYJ_Dataset(torch.utils.data.Dataset):
                  data_dir,
                  label_dir,
                  data_type,
-                 window_size=(224, 224)):
+                 window_size=(224, 224),
+                 normalize_type=None,
+                 cache_size=500):
         super(YYYJ_Dataset, self).__init__()
 
         self.data_type = data_type
         self.window_size = window_size
+        self.cache_size = cache_size  # 限制缓存数量
 
         # List of files
         self.data_files = [data_dir.format(id) for id in ids]
@@ -63,30 +66,59 @@ class YYYJ_Dataset(torch.utils.data.Dataset):
         self.data_cache = {}
         self.label_cache = {}
 
+        if normalize_type == "geo":
+            self.imagenet_mean = (0.430, 0.411, 0.296)
+            self.imagenet_std = (0.213, 0.156, 0.143)
+        elif normalize_type == "common":
+            self.imagenet_mean = (0.485, 0.456, 0.406)
+            self.imagenet_std = (0.229, 0.224, 0.225)
+        else:
+            self.imagenet_mean = None
+            self.imagenet_std = None
+
     def __len__(self):
-        return len(
-            self.data_files) * 100 if self.data_type == 'train' else len(
-                self.data_files)
+        interval_num = (256**2 / self.window_size[0]**2) * 1000  # 256尺寸时为*1000
+        data_len = len(self.data_files
+                       ) * interval_num if self.data_type == 'train' else len(
+                           self.data_files)
+        return int(data_len)
 
     def __getitem__(self, idx):
         if self.data_type == 'train':
             random_idx = random.randint(0, len(self.data_files) - 1)
 
-            if random_idx in self.data_cache.keys():
-                data = self.data_cache[random_idx]
-            else:
+            # 限制缓存大小，防止内存溢出
+            if random_idx not in self.data_cache.keys():
+                if len(self.data_cache) >= self.cache_size:
+                    # 移除最早的缓存项
+                    oldest_key = next(iter(self.data_cache))
+                    del self.data_cache[oldest_key]
+                    if oldest_key in self.label_cache:
+                        del self.label_cache[oldest_key]
+
                 data = Image.open(self.data_files[random_idx]).convert('RGB')
-                self.data_cache[random_idx] = data
-
-            if random_idx in self.label_cache.keys():
-                label = self.label_cache[random_idx]
-            else:
                 label = Image.open(self.label_files[random_idx]).convert('RGB')
-                # label_arr = np.array(label_img)
-                # label = np.asarray(self.convert_from_color(label_arr),
-                #                    dtype='int64')
 
+                # 缓存图像
+                self.data_cache[random_idx] = data
                 self.label_cache[random_idx] = label
+            else:
+                data = self.data_cache[random_idx]
+                label = self.label_cache[random_idx]
+
+            # 检查图像尺寸是否小于窗口尺寸，如果是则使用padding
+            img_width, img_height = data.size
+            pad_width = max(0, self.window_size[0] - img_width)
+            pad_height = max(0, self.window_size[1] - img_height)
+
+            if pad_width > 0 or pad_height > 0:
+                # 使用PIL的expand方法进行padding
+                data = ImageOps.expand(data,
+                                       border=(0, 0, pad_width, pad_height),
+                                       fill=(0, 0, 0))
+                label = ImageOps.expand(label,
+                                        border=(0, 0, pad_width, pad_height),
+                                        fill=(255, 255, 255))
 
             # Get a random patch
             x1, x2, y1, y2 = self.get_random_pos(data, self.window_size)
@@ -110,17 +142,38 @@ class YYYJ_Dataset(torch.utils.data.Dataset):
             # data = blur(data, p=0.5)
 
             # convert to np.array
-            data = np.array(data, dtype='float32').transpose((2, 0, 1))
+            # data = np.array(data, dtype='float32').transpose((2, 0, 1))
             label = np.array(label)
             label = np.asarray(self.convert_from_color(label), dtype='int64')
         else:
             data = Image.open(self.data_files[idx]).convert('RGB')
-            data = np.array(data, dtype='float32').transpose((2, 0, 1))
+            # data = np.array(data, dtype='float32').transpose((2, 0, 1))
 
-            label_img = Image.open(self.label_files[idx]).convert('RGB')
-            label_arr = np.array(label_img)
+            label = Image.open(self.label_files[idx]).convert('RGB')
+
+            # 检查图像尺寸是否小于窗口尺寸，如果是则使用padding
+            img_width, img_height = data.size
+            pad_width = max(0, self.window_size[0] - img_width)
+            pad_height = max(0, self.window_size[1] - img_height)
+
+            if pad_width > 0 or pad_height > 0:
+                # 使用PIL的expand方法进行padding
+                data = ImageOps.expand(data,
+                                       border=(0, 0, pad_width, pad_height),
+                                       fill=(0, 0, 0))
+                label = ImageOps.expand(label,
+                                        border=(0, 0, pad_width, pad_height),
+                                        fill=(255, 255, 255))
+
+            label_arr = np.array(label)
             label = np.asarray(self.convert_from_color(label_arr),
                                dtype='int64')
+
+        data = TF.to_tensor(data)  # Convert image to tensor
+        if self.imagenet_mean is not None:
+            data = TF.normalize(
+                data, self.imagenet_mean,
+                self.imagenet_std)  # Normalize with ImageNet mean and std
 
         return data, label
 
@@ -144,8 +197,9 @@ class YYYJ_Dataset(torch.utils.data.Dataset):
         elif isinstance(img, Image.Image):
             W, H = img.size
 
-        x1 = random.randint(0, W - w - 1)
-        x2 = x1 + w
-        y1 = random.randint(0, H - h - 1)
-        y2 = y1 + h
+        # 确保不会出现负的随机数范围
+        x1 = random.randint(0, max(0, W - w)) if W > w else 0
+        x2 = x1 + min(w, W)  # 确保不超出边界
+        y1 = random.randint(0, max(0, H - h)) if H > h else 0
+        y2 = y1 + min(h, H)  # 确保不超出边界
         return x1, x2, y1, y2

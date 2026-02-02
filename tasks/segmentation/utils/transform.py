@@ -65,24 +65,32 @@ def crop(img_a, mask, dsm, size, ignore_value=0):
     return img_a, mask, dsm
 
 
-def hflip(img_a, mask, dsm, p=0.5):
+def hflip(img_a, mask, dsm=None, p=0.5):
     if random.random() < p:
         img_a = transforms.functional.hflip(img_a)
         if mask is not None:
             mask = transforms.functional.hflip(mask)
         if dsm is not None:
             dsm = transforms.functional.hflip(dsm)
-    return img_a, mask, dsm
+
+    if dsm is not None:
+        return img_a, mask, dsm
+    else:
+        return img_a, mask
 
 
-def vflip(img_a, mask, dsm, p=0.5):
+def vflip(img_a, mask, dsm=None, p=0.5):
     if random.random() < p:
         img_a = transforms.functional.vflip(img_a)
         if mask is not None:
             mask = transforms.functional.vflip(mask)
         if dsm is not None:
             dsm = transforms.functional.vflip(dsm)
-    return img_a, mask, dsm
+
+    if dsm is not None:
+        return img_a, mask, dsm
+    else:
+        return img_a, mask
 
 
 def rotate(img_a, mask, p=0.5):
