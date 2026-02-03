@@ -114,13 +114,33 @@ class CombinedLoss(nn.Module):
         return ce, dice
 
 
-def metrics(predictions, gts, label_values):
+def metrics(predictions, gts, label_values, device='cuda'):
     logger = logging.getLogger("dinov3seg")
 
-    cm = confusion_matrix(gts, predictions, labels=range(len(label_values)))
+    # 转换为torch tensor并移至GPU
+    if isinstance(predictions, np.ndarray):
+        predictions = torch.from_numpy(predictions).long().to(device)
+    if isinstance(gts, np.ndarray):
+        gts = torch.from_numpy(gts).long().to(device)
+
+    num_classes = len(label_values)
+
+    # 计算混淆矩阵（GPU版本）
+    cm = torch.zeros((num_classes, num_classes),
+                     dtype=torch.long,
+                     device=device)
+
+    # 使用scatter_add_高效计算混淆矩阵
+    indices = gts * num_classes + predictions
+    cm_flat = torch.bincount(indices, minlength=num_classes * num_classes)
+    cm = cm_flat.reshape(num_classes, num_classes)
+
+    # 转回CPU进行后续计算（这些计算相对简单，CPU足够）
+    cm = cm.cpu().numpy()
 
     logger.info("Confusion matrix :")
     print(cm)
+
     # Compute global accuracy
     total = sum(sum(cm))
     accuracy = sum([cm[x][x] for x in range(len(cm))])
@@ -169,8 +189,29 @@ def metrics(predictions, gts, label_values):
     return MIoU, F1Score, kappa, accuracy
 
 
-def metrics_print_version(predictions, gts, label_values):
+def metrics_print_version(predictions, gts, label_values, device='cuda'):
     cm = confusion_matrix(gts, predictions, labels=range(len(label_values)))
+
+    # # 转换为torch tensor并移至GPU
+    # if isinstance(predictions, np.ndarray):
+    #     predictions = torch.from_numpy(predictions).long().to(device)
+    # if isinstance(gts, np.ndarray):
+    #     gts = torch.from_numpy(gts).long().to(device)
+
+    # num_classes = len(label_values)
+
+    # # 计算混淆矩阵（GPU版本）
+    # cm = torch.zeros((num_classes, num_classes),
+    #                  dtype=torch.long,
+    #                  device=device)
+
+    # # 使用scatter_add_高效计算混淆矩阵
+    # indices = gts * num_classes + predictions
+    # cm_flat = torch.bincount(indices, minlength=num_classes * num_classes)
+    # cm = cm_flat.reshape(num_classes, num_classes)
+
+    # # 转回CPU进行后续计算（这些计算相对简单，CPU足够）
+    # cm = cm.cpu().numpy()
 
     print("Confusion matrix :")
     print(cm)
