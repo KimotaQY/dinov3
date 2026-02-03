@@ -15,5 +15,10 @@ def get_labels(dataset_name=None):
             "地基建设", "基础结构建设", "封顶厂房", "封顶楼房", "施工道路", "硬化道路", "推填土", "体育场地",
             "临时棚房", "自建房", "专属设施", "未定义"
         ]
+    elif dataset_name == "EarthMiss":
+        labels = [
+            "Background", "Building", "Road", " Water", " Barren", " Forest",
+            " Agricultural", " Playground", "Undefined"
+        ]
 
     return labels
