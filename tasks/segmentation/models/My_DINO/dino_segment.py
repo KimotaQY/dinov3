@@ -9,7 +9,7 @@ from transformers import AutoImageProcessor, AutoModel
 
 from .linear_decoder import LinearHead
 from .fpn_decoder import FPNDecoder
-from .prn_decoder import Decoder, Decoder_FRM, Decoder_PRN, Decoder_MMFF, Decoder_FRM_MMFF, Decoder_PRN_MMFF
+from .prn_decoder import Decoder, Decoder_FRM, Decoder_PRN, Decoder_MMFF, Decoder_FRM_MMFF, Decoder_PRN_MMFF, Decoder_FRM_PRN
 from .sample_adapter import SampleAdapter
 from .lora import LoRA
 
@@ -89,6 +89,8 @@ class DINOSegmentModule(nn.Module):
             self.decoder = Decoder_FRM_MMFF(**decoder_kwargs)
         elif decoder_type == 'Decoder_PRN_MMFF':
             self.decoder = Decoder_PRN_MMFF(**decoder_kwargs)
+        elif decoder_type == 'Decoder_FRM_PRN':
+            self.decoder = Decoder_FRM_PRN(**decoder_kwargs)
         else:
             raise ValueError(f"Unknown decoder type: {decoder_type}")
 
@@ -314,12 +316,42 @@ def build_model(
                                   r=r,
                                   num_modalities=num_modalities,
                                   decoder_type="LinearHead")
+    elif model_name == 'DINOv3_Adapter':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  adapter_type="SampleAdapter",
+                                  decoder_type="LinearHead")
+    elif model_name == 'DINOv3_FRM_MMFF_PRN':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  decoder_type="Decoder")
+    elif model_name == 'DINOv3_FRM_PRN':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  decoder_type="Decoder_FRM_PRN")
+    elif model_name == 'DINOv3_Adapter_FRM_PRN':
+        model = DINOSegmentModule(backbone_weights=backbone_weights,
+                                  n_classes=n_classes,
+                                  use_lora=use_lora,
+                                  r=r,
+                                  num_modalities=num_modalities,
+                                  adapter_type="SampleAdapter",
+                                  decoder_type="Decoder_FRM_PRN")
 
     return model
 
 
 if __name__ == "__main__":
-    backbone_weights = "/home/yyyjvm/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
+    backbone_weights = "/home/yyyj/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
     model = build_model(backbone_weights=backbone_weights,
                         n_classes=6,
                         use_lora=False,

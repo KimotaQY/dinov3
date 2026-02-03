@@ -617,6 +617,64 @@ class Decoder_MMFF(nn.Module):
         return self.out_conv(p2)
 
 
+class Decoder_FRM_PRN(nn.Module):
+
+    def __init__(
+        self,
+        n_classes,
+        in_channels=[256, 512, 1024, 1024],
+        out_channels=256,
+        num_modalities: int = 1,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels  # 1024
+        self.out_channels = out_channels  # 1024 // 8 = 128
+        self.num_modalities = num_modalities  # 存储模态数量
+
+        # TODO: change the input channels
+        self.frm = FeatureReinforcementModule([in_channels[0]] + in_channels,
+                                              out_channels)
+
+        self.neck = ProgressiveRefinementNeck(channels_list=[out_channels] * 4,
+                                              num_stages=1)
+
+        self.out_conv = ConvBNReLU(out_channels, n_classes, 1, pad=0)
+
+    def forward(self, *modalities):
+        if len(modalities) == 1:
+            # 单模态情况：仅使用第一个模态
+            x = modalities[0]
+            features = self.frm(*x)
+            p2, p3, p4 = self.neck(features)
+        elif len(modalities) > 1 and self.num_modalities > 1 and len(
+                modalities) == self.num_modalities:
+            features_list = []
+            for modality in modalities:
+                features = self.frm(*modality)
+                features_list.append(features)
+
+            all_x2 = [features[0] for features in features_list]
+            all_x3 = [features[1] for features in features_list]
+            all_x4 = [features[2] for features in features_list]
+            all_x5 = [features[3] for features in features_list]
+
+            ff1 = sum(all_x2)
+            ff2 = sum(all_x3)
+            ff3 = sum(all_x4)
+            ff4 = sum(all_x5)
+
+            features = (ff1, ff2, ff3, ff4)
+
+            p2, p3, p4 = self.neck(features)
+        else:
+            raise ValueError(
+                f"Invalid number of modalities: {len(modalities)}, expected {self.num_modalities}"
+            )
+
+        return self.out_conv(p2)
+
+
 # 使用示例
 if __name__ == "__main__":
     # 论文中实际使用的P2-P5三个尺度
