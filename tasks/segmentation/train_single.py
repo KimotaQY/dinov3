@@ -31,7 +31,8 @@ from configs import get_cfg
 
 DATASET_NAME = "EarthMiss"
 MODEL_NAME = "DINOv3"
-NUM_MODALITIES = 2
+NUM_MODALITIES = 1
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def get_local_rank():
@@ -98,7 +99,6 @@ def main(**kwargs):
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1)
 
     # 将模型移到GPU
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
 
     # 如果分布式训练可用，则包装为分布式模型
@@ -116,11 +116,11 @@ def main(**kwargs):
     date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     src_dict = "/home/yyyj/SS-projects/dinov3/tasks/segmentation"
     dst_dict = f"{src_dict}/logs/{MODEL_NAME}/{DATASET_NAME}_{date_time}"
-    detection_log_dir = os.path.join(f"{src_dict}/logs", f"{MODEL_NAME}")
+    # detection_log_dir = os.path.join(f"{src_dict}/logs", f"{MODEL_NAME}")
+    # clean_logs(detection_log_dir, 2)
 
     # 只在主进程上创建目录和保存文件
     if distributed.is_main_process():
-        clean_logs(detection_log_dir, 2)
         print(f"正在将文件移动到 {dst_dict}...")
         move_files(src_dict, os.path.join(dst_dict, 'proj_files'),
                    ['logs', '__pycache__', '.pyc'])
@@ -142,7 +142,6 @@ def main(**kwargs):
           scheduler,
           save_dir=dst_dict if distributed.is_main_process() else None,
           cfg=cfg)
-    # test(model, test_loader, cfg)
 
 
 def train(model,
@@ -155,7 +154,6 @@ def train(model,
     logger = logging.getLogger("dinov3seg")
     epochs = cfg.get("epochs")
     best_IoU = 0.0
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     loss_fn = cfg.get("loss_fn")
 
     # 初始化用于记录训练和测试指标的文件
@@ -197,10 +195,17 @@ def train(model,
                 optimizer.zero_grad()
                 logits = model(input)
 
-            if MODEL_NAME == 'MultiSenseSeg':
-                loss = loss_fn(logits, label, e)
-            else:
-                loss = loss_fn(logits, label)
+            # 确保标签值在有效范围内
+            invalid_mask = (label < 0)
+            if invalid_mask.any():
+                # print(
+                #     f"Found {invalid_mask.sum().item()} invalid label values")
+                # print(f"Invalid values: {label[invalid_mask].unique()}")
+                # 将无效值替换为0或其他默认值
+                label = label.clone()  # 创建副本避免就地修改
+                label[invalid_mask] = len(cfg.get("labels"))
+
+            loss = loss_fn(logits, label)
 
             # 添加调试信息来帮助定位问题
             if torch.isnan(loss) or torch.isinf(loss):
@@ -275,7 +280,7 @@ def train(model,
                     model, 'module') else model.state_dict()
                 torch.save({
                     "model": model_state
-                }, f"{save_dir}/{MODEL_NAME}_{DATASET_NAME}_e{e}_mIoU{round(mIoU*100, 2)}.pth"
+                }, f"{save_dir}/dinoseg_{DATASET_NAME}_e{e}_mIoU{round(mIoU*100, 2)}.pth"
                            )
 
             # 记录测试指标到JSON文件
@@ -333,8 +338,6 @@ def train(model,
 def test(model, test_loader, cfg):
     # 清理缓存
     torch.cuda.empty_cache()
-    # 确定设备
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
 
     preds = []
