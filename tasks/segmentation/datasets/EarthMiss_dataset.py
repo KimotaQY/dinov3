@@ -6,6 +6,7 @@ import torch
 from PIL import Image
 from skimage.io import imread
 import torchvision.transforms.functional as TF
+from collections import OrderedDict
 
 deps_path = os.path.join(os.path.dirname(__file__), "task/segmentation")
 sys.path.insert(0, deps_path)
@@ -26,22 +27,48 @@ palette = {
 invert_palette = {v: k for k, v in palette.items()}
 
 
+class LRUCache:
+    """LRU缓存实现"""
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.cache = OrderedDict()
+
+    def get(self, key):
+        if key in self.cache:
+            # 移动到最前面（最近使用）
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        return None
+
+    def put(self, key, value):
+        if key in self.cache:
+            # 更新值并移动到最前面
+            self.cache.move_to_end(key)
+        self.cache[key] = value
+        # 如果超出容量，删除最久未使用的项
+        if len(self.cache) > self.capacity:
+            self.cache.popitem(last=False)
+
+
 class EarthMiss_Dataset(torch.utils.data.Dataset):
 
     def __init__(
-            self,
-            citys,
-            rgb_dir,
-            label_dir,
-            data_type,
-            window_size=(224, 224),
-            normalize_type=None,
-            sar_dir=None,
+        self,
+        citys,
+        rgb_dir,
+        label_dir,
+        data_type,
+        window_size=(224, 224),
+        normalize_type=None,
+        sar_dir=None,
+        cache_size=500,
     ):
         super(EarthMiss_Dataset, self).__init__()
 
         self.data_type = data_type
         self.window_size = window_size
+        self.cache_size = cache_size
 
         # List of files
         self.rgb_files = []
@@ -90,10 +117,10 @@ class EarthMiss_Dataset(torch.utils.data.Dataset):
             if not os.path.exists(file) and not os.path.isfile(file):
                 raise ValueError(f"File {file} does not exist")
 
-        # Initialize cache dicts
-        self.rgb_cache = {}
-        self.label_cache = {}
-        self.sar_cache = {}
+        # 初始化LRU缓存
+        self.rgb_cache = LRUCache(cache_size)
+        self.label_cache = LRUCache(cache_size)
+        self.sar_cache = LRUCache(cache_size)
 
         if normalize_type == "geo":
             self.imagenet_mean = (0.430, 0.411, 0.296)
@@ -116,27 +143,29 @@ class EarthMiss_Dataset(torch.utils.data.Dataset):
         if self.data_type == 'train':
             random_idx = random.randint(0, len(self.rgb_files) - 1)
 
-            if random_idx in self.rgb_cache.keys():
-                data = self.rgb_cache[random_idx]
+            # 使用LRU缓存
+            cached_data = self.rgb_cache.get(random_idx)
+            if cached_data is not None:
+                data = cached_data
             else:
                 data = imread(self.rgb_files[random_idx])
-                self.rgb_cache[random_idx] = data
+                self.rgb_cache.put(random_idx, data)
 
-            if random_idx in self.label_cache.keys():
-                label = self.label_cache[random_idx]
+            cached_label = self.label_cache.get(random_idx)
+            if cached_label is not None:
+                label = cached_label
             else:
                 label = imread(self.label_files[random_idx]).astype(np.int64)
                 label = label - 1
-
-                self.label_cache[random_idx] = label
+                self.label_cache.put(random_idx, label)
 
             sar = None
-            if random_idx in self.sar_cache.keys():
-                sar = self.sar_cache[random_idx]
+            cached_sar = self.sar_cache.get(random_idx)
+            if cached_sar is not None:
+                sar = cached_sar
             elif len(self.sar_files) > 0:
                 sar = imread(self.sar_files[random_idx])
-
-                self.sar_cache[random_idx] = sar
+                self.sar_cache.put(random_idx, sar)
 
             # Get a random patch
             # data = data.transpose((2, 0, 1))
