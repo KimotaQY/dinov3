@@ -5,6 +5,8 @@ from PIL import Image, ImageFilter, ImageOps
 from torchvision import transforms
 import torchvision.transforms.functional as F
 
+import cv2
+
 # def normalize(img_a, img_b):
 #     compose = transforms.Compose(
 #         [
@@ -19,7 +21,7 @@ import torchvision.transforms.functional as F
 
 
 def resize(img_a, mask=None, dsm=None, ratio_range=(0.5, 2.0)):
-    w, h = img_a.size
+    w, h = img_a.shape[:2] if isinstance(img_a, np.ndarray) else img_a.size
     long_side = random.randint(int(max(h, w) * ratio_range[0]),
                                int(max(h, w) * ratio_range[1]))
 
@@ -30,67 +32,124 @@ def resize(img_a, mask=None, dsm=None, ratio_range=(0.5, 2.0)):
         ow = long_side
         oh = int(1.0 * h * long_side / w + 0.5)
 
-    img_a = img_a.resize((ow, oh), Image.BILINEAR)
-    if mask is not None:
-        mask = mask.resize((ow, oh), Image.NEAREST)
-    if dsm is not None:
-        dsm = dsm.resize((ow, oh), Image.BILINEAR)
+    if isinstance(img_a, np.ndarray):
+        img_a = cv2.resize(img_a, (ow, oh), interpolation=cv2.INTER_LINEAR)
+        if mask is not None:
+            mask = cv2.resize(mask, (ow, oh), interpolation=cv2.INTER_NEAREST)
+        if dsm is not None:
+            dsm = cv2.resize(dsm, (ow, oh), interpolation=cv2.INTER_LINEAR)
+    else:
+        img_a = img_a.resize((ow, oh), Image.BILINEAR)
+        if mask is not None:
+            mask = mask.resize((ow, oh), Image.NEAREST)
+        if dsm is not None:
+            dsm = dsm.resize((ow, oh), Image.BILINEAR)
 
     return img_a, mask, dsm
 
 
 def crop(img_a, mask, dsm, size, ignore_value=0):
-    w, h = img_a.size
+    w, h = img_a.shape[:2] if isinstance(img_a, np.ndarray) else img_a.size
     padw = size - w if w < size else 0
     padh = size - h if h < size else 0
-    img_a = ImageOps.expand(img_a, border=(0, 0, padw, padh), fill=0)
-    if mask is not None:
-        mask = ImageOps.expand(mask,
-                               border=(0, 0, padw, padh),
-                               fill=ignore_value)
-    if dsm is not None:
-        dsm = ImageOps.expand(dsm,
-                              border=(0, 0, padw, padh),
-                              fill=ignore_value)
 
-    w, h = img_a.size
-    x = random.randint(0, w - size)
-    y = random.randint(0, h - size)
-    img_a = img_a.crop((x, y, x + size, y + size))
-    if mask is not None:
-        mask = mask.crop((x, y, x + size, y + size))
-    if dsm is not None:
-        dsm = dsm.crop((x, y, x + size, y + size))
+    if isinstance(img_a, np.ndarray):
+        if len(img_a.shape) == 3:  # 彩色图像
+            img_a = np.pad(img_a, ((0, padh), (0, padw), (0, 0)),
+                           mode='constant',
+                           constant_values=0)
+        else:  # 灰度图像
+            img_a = np.pad(img_a, ((0, padh), (0, padw)),
+                           mode='constant',
+                           constant_values=0)
+
+        if mask is not None:
+            mask = np.pad(mask, ((0, padh), (0, padw)),
+                          mode='constant',
+                          constant_values=ignore_value)
+
+        if dsm is not None:
+            dsm = np.pad(dsm, ((0, padh), (0, padw)),
+                         mode='constant',
+                         constant_values=ignore_value)
+
+        # 随机裁剪
+        h, w = img_a.shape[:2]
+        x = random.randint(0, w - size)
+        y = random.randint(0, h - size)
+
+        img_a = img_a[y:y + size, x:x + size]
+        if mask is not None:
+            mask = mask[y:y + size, x:x + size]
+        if dsm is not None:
+            dsm = dsm[y:y + size, x:x + size]
+    else:
+        img_a = ImageOps.expand(img_a, border=(0, 0, padw, padh), fill=0)
+        if mask is not None:
+            mask = ImageOps.expand(mask,
+                                   border=(0, 0, padw, padh),
+                                   fill=ignore_value)
+        if dsm is not None:
+            dsm = ImageOps.expand(dsm,
+                                  border=(0, 0, padw, padh),
+                                  fill=ignore_value)
+
+        w, h = img_a.size
+        x = random.randint(0, w - size)
+        y = random.randint(0, h - size)
+        img_a = img_a.crop((x, y, x + size, y + size))
+        if mask is not None:
+            mask = mask.crop((x, y, x + size, y + size))
+        if dsm is not None:
+            dsm = dsm.crop((x, y, x + size, y + size))
 
     return img_a, mask, dsm
 
 
 def hflip(img_a, mask, dsm=None, p=0.5):
     if random.random() < p:
-        img_a = transforms.functional.hflip(img_a)
-        if mask is not None:
-            mask = transforms.functional.hflip(mask)
-        if dsm is not None:
-            dsm = transforms.functional.hflip(dsm)
+        if isinstance(img_a, np.ndarray):
+            # numpy array水平翻转
+            img_a = np.fliplr(img_a)
+            if mask is not None:
+                mask = np.fliplr(mask)
+            if dsm is not None:
+                dsm = np.fliplr(dsm)
+        else:
+            # PIL Image水平翻转
+            img_a = transforms.functional.hflip(img_a)
+            if mask is not None:
+                mask = transforms.functional.hflip(mask)
+            if dsm is not None:
+                dsm = transforms.functional.hflip(dsm)
 
     if dsm is not None:
         return img_a, mask, dsm
     else:
-        return img_a, mask
+        return img_a, mask, dsm
 
 
 def vflip(img_a, mask, dsm=None, p=0.5):
     if random.random() < p:
-        img_a = transforms.functional.vflip(img_a)
-        if mask is not None:
-            mask = transforms.functional.vflip(mask)
-        if dsm is not None:
-            dsm = transforms.functional.vflip(dsm)
+        if isinstance(img_a, np.ndarray):
+            # numpy array垂直翻转
+            img_a = np.flipud(img_a)
+            if mask is not None:
+                mask = np.flipud(mask)
+            if dsm is not None:
+                dsm = np.flipud(dsm)
+        else:
+            # PIL Image垂直翻转
+            img_a = transforms.functional.vflip(img_a)
+            if mask is not None:
+                mask = transforms.functional.vflip(mask)
+            if dsm is not None:
+                dsm = transforms.functional.vflip(dsm)
 
     if dsm is not None:
         return img_a, mask, dsm
     else:
-        return img_a, mask
+        return img_a, mask, dsm
 
 
 def rotate(img_a, mask, p=0.5):
