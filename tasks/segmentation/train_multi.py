@@ -42,7 +42,29 @@ def get_local_rank():
         return 0
 
 
+def setup_nccl_environment():
+    """设置NCCL环境变量以提高稳定性"""
+    # 增加NCCL超时时间
+    os.environ['NCCL_TIMEOUT'] = '1200'  # 20分钟
+    # os.environ['NCCL_BLOCKING_WAIT'] = '1'  # 启用阻塞等待
+    # os.environ['NCCL_ASYNC_ERROR_HANDLING'] = '1'  # 启用异步错误处理
+    # os.environ['TORCH_NCCL_ASYNC_ERROR_HANDLING'] = '1'  # PyTorch 2.2+版本
+
+    # # 设置NCCL通信参数
+    # os.environ['NCCL_DEBUG'] = 'INFO'  # 调试信息
+    # os.environ['NCCL_SOCKET_IFNAME'] = 'lo'  # 使用回环接口（单机多卡）
+
+    # # 减少NCCL操作的并发性以提高稳定性
+    # os.environ['NCCL_P2P_LEVEL'] = 'LOC'  # 限制P2P通信级别
+    # os.environ['NCCL_SHM_DISABLE'] = '1'  # 禁用共享内存
+
+    print("NCCL环境变量已设置完成")
+
+
 def main(**kwargs):
+    # 在初始化分布式训练前设置NCCL环境
+    setup_nccl_environment()
+
     try:
         # 初始化分布式训练环境
         distributed.enable(overwrite=True)
@@ -196,6 +218,16 @@ def train(model,
                 input, label = input.to(device), label.to(device)
                 optimizer.zero_grad()
                 logits = model(input)
+
+            # 确保标签值在有效范围内
+            invalid_mask = (label < 0)
+            if invalid_mask.any():
+                # print(
+                #     f"Found {invalid_mask.sum().item()} invalid label values")
+                # print(f"Invalid values: {label[invalid_mask].unique()}")
+                # 将无效值替换为0或其他默认值
+                label = label.clone()  # 创建副本避免就地修改
+                label[invalid_mask] = len(cfg.get("labels")) - 1
 
             if MODEL_NAME == 'MultiSenseSeg':
                 loss = loss_fn(logits, label, e)
@@ -357,7 +389,7 @@ def test(model, test_loader, cfg):
                                        n_output_channels=len(classes),
                                        crop_size=window_size,
                                        stride=(s_w, s_w),
-                                       batch_size=cfg.get("batch_size", 4))
+                                       batch_size=cfg.get("batch_size", 4) * 4)
         else:
             input, label = batch
             input = input.to(device)
@@ -369,7 +401,17 @@ def test(model, test_loader, cfg):
                                        n_output_channels=len(classes),
                                        crop_size=window_size,
                                        stride=(s_w, s_w),
-                                       batch_size=cfg.get("batch_size", 4))
+                                       batch_size=cfg.get("batch_size", 4) * 4)
+
+        # 确保标签值在有效范围内
+        invalid_mask = (label < 0)
+        if invalid_mask.any():
+            # print(
+            #     f"Found {invalid_mask.sum().item()} invalid label values")
+            # print(f"Invalid values: {label[invalid_mask].unique()}")
+            # 将无效值替换为0或其他默认值
+            label = label.clone()  # 创建副本避免就地修改
+            label[invalid_mask] = len(cfg.get("labels")) - 1
 
         pred = np.argmax(pred, axis=1)
         preds.append(pred)
