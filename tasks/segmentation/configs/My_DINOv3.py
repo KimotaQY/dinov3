@@ -17,13 +17,13 @@ def get_cfg(model_name=None, dataset_name=None, **kwargs):
     epochs = 50
     window_size = (512, 512)
     labels = get_labels(dataset_name)
-    ignore_index = len(labels)
+    ignore_index = len(labels) - 1
     loss_fn = JointLoss(
         SoftCrossEntropyLoss(smooth_factor=0.05, ignore_index=ignore_index),
         DiceLoss(smooth=0.05, ignore_index=ignore_index), 1.0, 1.0)
 
     # pretrained_model_name = "/home/yyyj/Checkpoints/facebook/dinov3-vitl16-pretrain-sat493m"
-    backbone_weights = "/home/yyyjvm/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
+    backbone_weights = "/home/yyyj/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
     if model_name is not None:
         model = build_model(model_name=model_name,
                             backbone_weights=backbone_weights,

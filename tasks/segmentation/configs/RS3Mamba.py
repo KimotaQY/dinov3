@@ -17,7 +17,7 @@ def get_cfg(dataset_name=None):
     epochs = 50
     window_size = (256, 256)
     labels = get_labels(dataset_name)
-    ignore_index = len(labels)
+    ignore_index = len(labels) - 1
     loss_fn = SoftCrossEntropyLoss(smooth_factor=0.05,
                                    ignore_index=ignore_index)
 

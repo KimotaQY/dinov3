@@ -19,7 +19,7 @@ def get_cfg(dataset_name=None):
     epochs = 100
     window_size = (512, 512)
     labels = get_labels(dataset_name)
-    ignore_index = len(labels)
+    ignore_index = len(labels) - 1
     loss_fn = LossFn(epochs=epochs, ignore_index=ignore_index)
 
     model = Build_MultiSenseSeg(n_classes=len(labels), in_chans=(3, 3))

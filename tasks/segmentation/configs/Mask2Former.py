@@ -17,13 +17,13 @@ def get_cfg(dataset_name=None):
     epochs = 50
     window_size = (256, 256)
     labels = get_labels(dataset_name)
-    ignore_index = len(labels)
+    ignore_index = len(labels) - 1
     loss_fn = JointLoss(
         SoftCrossEntropyLoss(smooth_factor=0.05, ignore_index=ignore_index),
         DiceLoss(smooth=0.05, ignore_index=ignore_index), 1.0, 1.0)
 
-    # pretrained_model_name = "/home/yyyjvm/Checkpoints/facebook/dinov3-vitl16-pretrain-sat493m"
-    backbone_weights = "/home/yyyjvm/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
+    # pretrained_model_name = "/home/yyyj/Checkpoints/facebook/dinov3-vitl16-pretrain-sat493m"
+    backbone_weights = "/home/yyyj/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
     model = Mask2Former(backbone_weights=backbone_weights,
                         n_classes=len(labels))
 
