@@ -1,5 +1,6 @@
 ```bash
 torchrun --nproc_per_node=2 ./tasks/segmentation/train_distr.py
+torchrun --nproc_per_node=2 ./tasks/segmentation/train_multi.py  --model-name DINOv3 --num-modalities 1
 ```
 
 # 重新挂载并指定用户和组权限
