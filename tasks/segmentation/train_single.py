@@ -203,7 +203,7 @@ def train(model,
                 # print(f"Invalid values: {label[invalid_mask].unique()}")
                 # 将无效值替换为0或其他默认值
                 label = label.clone()  # 创建副本避免就地修改
-                label[invalid_mask] = len(cfg.get("labels"))
+                label[invalid_mask] = len(cfg.get("labels")) - 1
 
             loss = loss_fn(logits, label)
 
@@ -266,7 +266,7 @@ def train(model,
             scheduler.step()
 
         # 每隔{save_interval}个epoch保存一次模型
-        save_interval = 5
+        save_interval = 1
         if e % save_interval == 0 and distributed.is_main_process():
             test_metrics = test(model, test_loader, cfg=cfg)
 
@@ -360,7 +360,7 @@ def test(model, test_loader, cfg):
                                        n_output_channels=len(classes),
                                        crop_size=window_size,
                                        stride=(s_w, s_w),
-                                       batch_size=cfg.get("batch_size", 4))
+                                       batch_size=cfg.get("batch_size", 4) * 4)
         else:
             input, label = batch
             input = input.to(device)
@@ -372,7 +372,17 @@ def test(model, test_loader, cfg):
                                        n_output_channels=len(classes),
                                        crop_size=window_size,
                                        stride=(s_w, s_w),
-                                       batch_size=cfg.get("batch_size", 4))
+                                       batch_size=cfg.get("batch_size", 4) * 4)
+
+        # 确保标签值在有效范围内
+        invalid_mask = (label < 0)
+        if invalid_mask.any():
+            # print(
+            #     f"Found {invalid_mask.sum().item()} invalid label values")
+            # print(f"Invalid values: {label[invalid_mask].unique()}")
+            # 将无效值替换为0或其他默认值
+            label = label.clone()  # 创建副本避免就地修改
+            label[invalid_mask] = len(cfg.get("labels")) - 1
 
         pred = np.argmax(pred, axis=1)
         preds.append(pred)

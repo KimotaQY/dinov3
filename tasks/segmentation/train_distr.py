@@ -29,8 +29,9 @@ from utils.clean_logs import clean_logs
 
 from configs import get_cfg
 
-DATASET_NAME = "Potsdam"
+DATASET_NAME = "EarthMiss"
 MODEL_NAME = "DINOv3"
+NUM_MODALITIES = 1
 
 
 def get_local_rank():
@@ -41,7 +42,7 @@ def get_local_rank():
         return 0
 
 
-def main():
+def main(**kwargs):
     try:
         # 初始化分布式训练环境
         distributed.enable(overwrite=True)
@@ -55,7 +56,7 @@ def main():
         os.environ['MASTER_PORT'] = '12355'
 
     # 获取模型配置
-    cfg = get_cfg(MODEL_NAME, DATASET_NAME)
+    cfg = get_cfg(MODEL_NAME, DATASET_NAME, **kwargs)
     window_size = cfg.get('window_size')
     batch_size = cfg.get('batch_size')
     model = cfg.get('model')
@@ -63,10 +64,12 @@ def main():
     scheduler = cfg.get('scheduler')
 
     set_seed(42)
-    train_dataset = build_dataset(DATASET_NAME,
-                                  "train",
-                                  window_size=window_size,
-                                  model_name=MODEL_NAME)
+    train_dataset = build_dataset(
+        DATASET_NAME,
+        "train",
+        window_size=window_size,
+        model_name=MODEL_NAME,
+        modality="multi" if NUM_MODALITIES > 1 else None)
 
     # 根据分布式训练设置调整采样器
     if distributed.is_enabled():
@@ -86,10 +89,12 @@ def main():
                                                num_workers=8,
                                                pin_memory=False)
 
-    test_dataset = build_dataset(DATASET_NAME,
-                                 "test",
-                                 window_size=window_size,
-                                 model_name=MODEL_NAME)
+    test_dataset = build_dataset(
+        DATASET_NAME,
+        "test",
+        window_size=window_size,
+        model_name=MODEL_NAME,
+        modality="multi" if NUM_MODALITIES > 1 else None)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1)
 
     # 将模型移到GPU
@@ -109,7 +114,7 @@ def main():
 
     # 创建日志目录
     date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    src_dict = "/home/yyyjvm/SS-projects/dinov3/tasks/segmentation"
+    src_dict = "/home/yyyj/SS-projects/dinov3/tasks/segmentation"
     dst_dict = f"{src_dict}/logs/{MODEL_NAME}/{DATASET_NAME}_{date_time}"
     detection_log_dir = os.path.join(f"{src_dict}/logs", f"{MODEL_NAME}")
 
@@ -179,10 +184,18 @@ def train(model,
 
         iterations = tqdm(train_loader,
                           disable=not distributed.is_main_process())
-        for input, label in iterations:
-            input, label = input.to(device), label.to(device)
-            optimizer.zero_grad()
-            logits = model(input)
+        for batch in iterations:
+            if NUM_MODALITIES > 1:
+                input, dsm, label = batch
+                input, dsm, label = input.to(device), dsm.to(device), label.to(
+                    device)
+                optimizer.zero_grad()
+                logits = model(input, dsm)
+            else:
+                input, label = batch
+                input, label = input.to(device), label.to(device)
+                optimizer.zero_grad()
+                logits = model(input)
 
             loss = loss_fn(logits, label)
 
@@ -328,16 +341,32 @@ def test(model, test_loader, cfg):
     classes = cfg.get("labels")
 
     iterations = tqdm(test_loader, disable=not distributed.is_main_process())
-    for input, label in iterations:
-        input = input.to(device)
-        with torch.no_grad():
-            s_w = int(window_size[0] * 2 / 3)
-            pred = slide_inference(input,
-                                   model,
-                                   n_output_channels=len(classes),
-                                   crop_size=window_size,
-                                   stride=(s_w, s_w),
-                                   batch_size=cfg.get("batch_size", 4))
+    for batch in iterations:
+        if NUM_MODALITIES > 1:
+            input, dsm, label = batch
+            input, dsm = input.to(device), dsm.to(device)
+
+            with torch.no_grad():
+                s_w = int(window_size[0] * 2 / 3)
+                pred = slide_inference(input,
+                                       model,
+                                       dsm=dsm,
+                                       n_output_channels=len(classes),
+                                       crop_size=window_size,
+                                       stride=(s_w, s_w),
+                                       batch_size=cfg.get("batch_size", 4))
+        else:
+            input, label = batch
+            input = input.to(device)
+
+            with torch.no_grad():
+                s_w = int(window_size[0] * 2 / 3)
+                pred = slide_inference(input,
+                                       model,
+                                       n_output_channels=len(classes),
+                                       crop_size=window_size,
+                                       stride=(s_w, s_w),
+                                       batch_size=cfg.get("batch_size", 4))
 
         pred = np.argmax(pred, axis=1)
         preds.append(pred)
@@ -354,4 +383,23 @@ def test(model, test_loader, cfg):
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Train segmentation model')
+    parser.add_argument('--model-name',
+                        type=str,
+                        default='DINOv3',
+                        help='Name of the model to train')
+    parser.add_argument('--num-modalities',
+                        type=int,
+                        default=1,
+                        help='Number of modality to train')
+    args = parser.parse_args()
+
+    # 如果提供了模型名称参数，使用它；否则使用默认值
+    if args.model_name:
+        MODEL_NAME = args.model_name
+    if args.num_modalities:
+        NUM_MODALITIES = args.num_modalities
+
+    main(num_modalities=NUM_MODALITIES)
