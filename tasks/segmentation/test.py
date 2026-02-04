@@ -22,11 +22,10 @@ from utils.inference import slide_inference
 # DATASET_NAME = "Potsdam"
 DATASET_NAME = "Vaihingen"
 MODEL_NAME = "DINOv3"
-# MODALITY = "uni"
-MODALITY = "multi"
+NUM_MODALITIES = 2
 
 PROJECT_ID = os.environ.get('DINO_PROJECT_ID',
-                            MODEL_NAME + ".Potsdam_20251126_090536")
+                            MODEL_NAME + ".Vaihingen_20260203_092721")
 # 动态导入模块
 train_distr_module = importlib.import_module(
     f'logs.{PROJECT_ID}.proj_files.train_distr')
@@ -38,7 +37,7 @@ datasets_module = importlib.import_module(
 from tasks.segmentation.datasets import build_dataset
 from configs import get_cfg
 
-classification_model_path = "/home/yyyj/SS-projects/dinov3/tasks/segmentation/logs/DINOv3/Potsdam_20251126_090536/DINOv3_Potsdam_e40_mIoU86.02.pth"
+classification_model_path = "/home/yyyj/SS-projects/dinov3/tasks/segmentation/logs/DINOv3/Vaihingen_20260203_092721/DINOv3_Vaihingen_e40_mIoU83.58.pth"
 
 
 def get_local_rank():
@@ -49,7 +48,7 @@ def get_local_rank():
         return 0
 
 
-def main():
+def main(**kwargs):
     try:
         # 初始化分布式训练环境
         distributed.enable(overwrite=True)
@@ -64,15 +63,16 @@ def main():
 
     # 获取模型配置
     # cfg = cfg_module.get_cfg(MODEL_NAME, DATASET_NAME)
-    cfg = get_cfg(MODEL_NAME, DATASET_NAME)
+    cfg = get_cfg(MODEL_NAME, DATASET_NAME, **kwargs)
     window_size = cfg.get('window_size')
     model = cfg.get('model')
 
-    test_dataset = build_dataset(DATASET_NAME,
-                                 "test",
-                                 window_size=window_size,
-                                 model_name=MODEL_NAME,
-                                 modality=MODALITY)
+    test_dataset = build_dataset(
+        DATASET_NAME,
+        "test",
+        window_size=window_size,
+        model_name=MODEL_NAME,
+        modality="multi" if NUM_MODALITIES > 1 else None)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1)
 
     # 将模型移到GPU
@@ -110,9 +110,11 @@ def test(model, test_loader, cfg):
     classes = cfg.get("labels")
 
     iterations = tqdm(test_loader, disable=not distributed.is_main_process())
-    if MODALITY == "multi":
-        for input, dsm, label in iterations:
+    for batch in iterations:
+        if NUM_MODALITIES > 1:
+            input, dsm, label = batch
             input, dsm = input.to(device), dsm.to(device)
+
             with torch.no_grad():
                 s_w = int(window_size[0] * 2 / 3)
                 pred = slide_inference(input,
@@ -122,13 +124,10 @@ def test(model, test_loader, cfg):
                                        crop_size=window_size,
                                        stride=(s_w, s_w),
                                        batch_size=cfg.get("batch_size", 4))
-
-            pred = np.argmax(pred, axis=1)
-            preds.append(pred)
-            labels.append(label)
-    else:
-        for input, label in iterations:
+        else:
+            input, label = batch
             input = input.to(device)
+
             with torch.no_grad():
                 s_w = int(window_size[0] * 2 / 3)
                 pred = slide_inference(input,
@@ -136,12 +135,11 @@ def test(model, test_loader, cfg):
                                        n_output_channels=len(classes),
                                        crop_size=window_size,
                                        stride=(s_w, s_w),
-                                       batch_size=(cfg.get("batch_size", 4)) *
-                                       4)
+                                       batch_size=cfg.get("batch_size", 4))
 
-            pred = np.argmax(pred, axis=1)
-            preds.append(pred)
-            labels.append(label)
+        pred = np.argmax(pred, axis=1)
+        preds.append(pred)
+        labels.append(label)
 
     MIoU, F1, Kappa, Acc = metrics(
         np.concatenate([p.ravel() for p in preds]),
@@ -157,7 +155,8 @@ def test(model, test_loader, cfg):
 # os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 # from tasks.segmentation.models.UMFormer.UMFormer import UMFormer
 if __name__ == "__main__":
-    main()
+    NUM_MODALITIES = 1
+    main(num_modalities=NUM_MODALITIES)
     # local_model_dir = "/home/yyyj/Checkpoints/timm/resnet18.fb_swsl_ig1b_ft_in1k"
     # net = UMFormer(6, local_model_dir=local_model_dir)
     # net = net.cuda(0)
