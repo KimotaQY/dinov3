@@ -170,8 +170,7 @@ class DINOSegmentModule(nn.Module):
             logits = self.decoder(multi_scale_features)
 
         else:
-            all_processed_outputs = []
-
+            outputs_modalities = []
             for idx, modality_input in enumerate(modalities):
                 if modality_input.shape[1] != C and idx > 0:
                     modality_input = modality_input.repeat(1, C, 1, 1)
@@ -179,13 +178,15 @@ class DINOSegmentModule(nn.Module):
                 outputs_modality = self.backbone.get_intermediate_layers(
                     modality_input,
                     n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
+                outputs_modalities.append(outputs_modality)
 
-                if self.adapter is not None:
-                    # 使用适配器处理多尺度特征
-                    processed_outputs_modality = self.adapter(outputs_modality,
-                                                              patch_h=patch_h,
-                                                              patch_w=patch_w)
-                else:
+            if self.adapter is not None:
+                # 使用适配器处理多尺度特征
+                processed_outputs_modalities = self.adapter(
+                    *outputs_modalities, patch_h=patch_h, patch_w=patch_w)
+            else:
+                processed_outputs_modalities = []
+                for outputs_modality in outputs_modalities:
                     # 直接处理中间层输出
                     processed_outputs_modality = []
                     for i, output in enumerate(outputs_modality):
@@ -201,10 +202,11 @@ class DINOSegmentModule(nn.Module):
                                 align_corners=False)
                         processed_outputs_modality.append(output)
 
-                all_processed_outputs.append(processed_outputs_modality)
+                    processed_outputs_modalities.append(
+                        processed_outputs_modality)
 
             # 将处理后的所有模态特征传递给解码器
-            logits = self.decoder(*all_processed_outputs)
+            logits = self.decoder(*processed_outputs_modalities)
 
         _H, _W = logits.shape[2:]
         if _H != H or _W != W:
@@ -351,7 +353,7 @@ def build_model(
 
 
 if __name__ == "__main__":
-    backbone_weights = "/home/yyyj/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
+    backbone_weights = "/home/yyyjvm/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
     model = build_model(backbone_weights=backbone_weights,
                         n_classes=6,
                         use_lora=False,

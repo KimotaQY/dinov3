@@ -93,41 +93,39 @@ class SampleAdapter(nn.Module):
             num_modalities = len(features_list)
 
             # 处理每个模态的特征
-            all_processed_features = [[] for _ in range(len(features_list[0]))
+            all_processed_features = [[] for _ in range(len(features_list))
                                       ]  # 为每个层级创建列表
-
-            for modality_idx, features in enumerate(features_list):
-                for i, feat in enumerate(features):
+            for i, modality_features in enumerate(zip(*features_list)):
+                processed_features = []
+                for feat in modality_features:
                     feat = feat.permute(0, 2, 1).reshape(
                         (feat.shape[0], feat.shape[-1], patch_h, patch_w))
 
                     feat = self.projects[i](feat)
                     feat = self.resize_layers[i](feat)
 
-                    all_processed_features[i].append(feat)
+                    processed_features.append(feat)
 
-            # 对每个层级的特征进行加权融合
-            fused_out = []
-            for level_idx, level_features in enumerate(all_processed_features):
-                # 获取当前层级的加权融合结果
-                weight_param_names = [
-                    f'weight_modality_{i}' for i in range(num_modalities)
-                ]
-                weights = [
-                    torch.sigmoid(self.modality_weights[name])
-                    for name in weight_param_names
-                ]
+                for j, feat in enumerate(processed_features):
+                    weight_param_names = [
+                        f'weight_modality_{i}' for i in range(num_modalities)
+                    ]
+                    weights = [
+                        torch.sigmoid(self.modality_weights[name])
+                        for name in weight_param_names
+                    ]
 
-                # 归一化权重，确保它们的和为1
-                total_weight = sum(weights)
-                normalized_weights = [w / total_weight for w in weights]
+                    # 归一化权重，确保它们的和为1
+                    total_weight = sum(weights)
+                    normalized_weights = [w / total_weight for w in weights]
 
-                # 加权求和
-                fused_feature = sum(
-                    w * f for w, f in zip(normalized_weights, level_features))
-                fused_out.append(fused_feature)
+                    # 加权求和
+                    fused_feature = sum(w * f for w, f in zip(
+                        normalized_weights, processed_features))
 
-            return fused_out
+                    all_processed_features[j].append(fused_feature)
+
+            return all_processed_features
 
 
 class DPTHead(nn.Module):
