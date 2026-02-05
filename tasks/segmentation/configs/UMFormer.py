@@ -17,7 +17,7 @@ def get_cfg(dataset_name=None):
     epochs = 105
     window_size = (512, 512)
     labels = get_labels(dataset_name)
-    ignore_index = len(labels) - 1
+    ignore_index = len(labels)
     loss_fn = JointLoss(
         SoftCrossEntropyLoss(smooth_factor=0.05, ignore_index=ignore_index),
         DiceLoss(smooth=0.05, ignore_index=ignore_index), 1.0, 1.0)
@@ -25,7 +25,7 @@ def get_cfg(dataset_name=None):
     model = UMFormer(
         len(labels),
         local_model_dir=
-        "/home/yyyj/Checkpoints/timm/resnet18.fb_swsl_ig1b_ft_in1k")
+        f"{MS_ROOT_DIR}/Checkpoints/timm/resnet18.fb_swsl_ig1b_ft_in1k")
 
     # 根据GPU数量调整学习率
     if distributed.is_enabled():

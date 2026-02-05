@@ -28,6 +28,7 @@ from utils.move_files import move_files
 from utils.clean_logs import clean_logs
 
 from configs import get_cfg
+from configs.common_cfg import MS_ROOT_DIR
 
 DATASET_NAME = "EarthMiss"
 MODEL_NAME = "DINOv3"
@@ -114,7 +115,7 @@ def main(**kwargs):
 
     # 创建日志目录
     date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    src_dict = "/home/yyyj/SS-projects/dinov3/tasks/segmentation"
+    src_dict = f"{MS_ROOT_DIR}/SS-projects/dinov3/tasks/segmentation"
     dst_dict = f"{src_dict}/logs/{MODEL_NAME}/{DATASET_NAME}_{date_time}"
     detection_log_dir = os.path.join(f"{src_dict}/logs", f"{MODEL_NAME}")
 

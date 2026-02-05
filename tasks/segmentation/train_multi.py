@@ -28,8 +28,9 @@ from utils.move_files import move_files
 from utils.clean_logs import clean_logs
 
 from configs import get_cfg
+from configs.common_cfg import MS_ROOT_DIR
 
-DATASET_NAME = "EarthMiss"
+DATASET_NAME = "Vaihingen"
 MODEL_NAME = "DINOv3"
 NUM_MODALITIES = 2
 
@@ -136,7 +137,7 @@ def main(**kwargs):
 
     # 创建日志目录
     date_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    src_dict = "/home/yyyj/SS-projects/dinov3/tasks/segmentation"
+    src_dict = f"{MS_ROOT_DIR}/SS-projects/dinov3/tasks/segmentation"
     dst_dict = f"{src_dict}/logs/{MODEL_NAME}/{DATASET_NAME}_{date_time}"
     detection_log_dir = os.path.join(f"{src_dict}/logs", f"{MODEL_NAME}")
 
@@ -220,14 +221,14 @@ def train(model,
                 logits = model(input)
 
             # 确保标签值在有效范围内
-            invalid_mask = (label < 0)
+            invalid_mask = (label < 0) | (label > len(cfg.get("labels")) - 1)
             if invalid_mask.any():
                 # print(
                 #     f"Found {invalid_mask.sum().item()} invalid label values")
                 # print(f"Invalid values: {label[invalid_mask].unique()}")
                 # 将无效值替换为0或其他默认值
                 label = label.clone()  # 创建副本避免就地修改
-                label[invalid_mask] = len(cfg.get("labels")) - 1
+                label[invalid_mask] = len(cfg.get("labels"))
 
             if MODEL_NAME == 'MultiSenseSeg':
                 loss = loss_fn(logits, label, e)
@@ -404,14 +405,14 @@ def test(model, test_loader, cfg):
                                        batch_size=cfg.get("batch_size", 4) * 4)
 
         # 确保标签值在有效范围内
-        invalid_mask = (label < 0)
+        invalid_mask = (label < 0) | (label > len(cfg.get("labels")) - 1)
         if invalid_mask.any():
             # print(
             #     f"Found {invalid_mask.sum().item()} invalid label values")
             # print(f"Invalid values: {label[invalid_mask].unique()}")
             # 将无效值替换为0或其他默认值
             label = label.clone()  # 创建副本避免就地修改
-            label[invalid_mask] = len(cfg.get("labels")) - 1
+            label[invalid_mask] = len(cfg.get("labels"))
 
         pred = np.argmax(pred, axis=1)
         preds.append(pred)
@@ -421,8 +422,13 @@ def test(model, test_loader, cfg):
         np.concatenate([p.ravel() for p in preds]),
         np.concatenate([p.ravel() for p in labels]).ravel(), classes)
 
-    # 构建详细指标字典
-    detailed_metrics = {"MIoU": MIoU, "F1": F1, "Kappa": Kappa, "Acc": Acc}
+    # 构建详细指标字典，并转换为Python原生类型以支持JSON序列化
+    detailed_metrics = {
+        "MIoU": float(MIoU),  # 转换为Python float
+        "F1": float(F1),  # 转换为Python float
+        "Kappa": float(Kappa),  # 转换为Python float
+        "Acc": float(Acc)  # 转换为Python float
+    }
 
     return detailed_metrics
 

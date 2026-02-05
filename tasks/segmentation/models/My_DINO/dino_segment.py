@@ -350,19 +350,3 @@ def build_model(
                                   decoder_type="Decoder_FRM_PRN")
 
     return model
-
-
-if __name__ == "__main__":
-    backbone_weights = "/home/yyyjvm/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
-    model = build_model(backbone_weights=backbone_weights,
-                        n_classes=6,
-                        use_lora=False,
-                        r=3,
-                        num_modalities=2)
-    x = torch.randn(1, 3, 224, 224).cuda()
-    y = torch.randn(1, 3, 224, 224).cuda()
-
-    model = model.cuda()
-    output = model(x, y)
-
-    print(output.shape)

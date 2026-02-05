@@ -473,24 +473,3 @@ class UMFormer(nn.Module):
 
         out = self.decoder(mid, skip_list)
         return out
-
-
-from thop import profile
-
-device = torch.device('cuda:0')
-if __name__ == '__main__':
-    local_model_dir = "/home/yyyj/Checkpoints/timm/resnet18.fb_swsl_ig1b_ft_in1k"
-    net = UMFormer(6, local_model_dir=local_model_dir)
-    net = net.cuda()
-    dummy_input = torch.randn(1, 3, 1024, 1024).to(device)
-    flops, params = profile(net, (dummy_input, ))
-    # print('flops: ', flops, 'params: ', params)
-    print('flops: %.2f M, params: %.2f M' %
-          (flops / 1000000.0, params / 1000000.0))
-    print('***************************')
-    # x = torch.rand(2, 3, 512, 512).to(device)
-    total = sum([param.nelement() for param in net.parameters()])  # 计算总参数量
-    print("model size:", total / 1000 / 1000, "M")
-    print('***************************')
-    y = net(dummy_input)
-    print(y.size())

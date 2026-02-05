@@ -17,18 +17,18 @@ def get_cfg(dataset_name=None):
     epochs = 50
     window_size = (256, 256)
     labels = get_labels(dataset_name)
-    ignore_index = len(labels) - 1
+    ignore_index = len(labels)
     loss_fn = SoftCrossEntropyLoss(smooth_factor=0.05,
                                    ignore_index=ignore_index)
 
     model = RS3Mamba(
         num_classes=len(labels),
         local_model_dir=
-        "/home/yyyj/Checkpoints/timm/resnet18.fb_swsl_ig1b_ft_in1k")
+        f"{MS_ROOT_DIR}/Checkpoints/timm/resnet18.fb_swsl_ig1b_ft_in1k")
 
     model = load_pretrained_ckpt(
         model,
-        ckpt_path="/home/yyyj/Checkpoints/RS3Mamba/vmamba_tiny_e292.pth")
+        ckpt_path=f"{MS_ROOT_DIR}/Checkpoints/RS3Mamba/vmamba_tiny_e292.pth")
 
     # 根据GPU数量调整学习率
     if distributed.is_enabled():

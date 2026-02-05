@@ -29,5 +29,6 @@ def clean_logs(log_dir, min_cktp_num: int = 0):
 
 
 if __name__ == "__main__":
-    log_dir = "/home/yyyjvm/SS-projects/dinov3/tasks/segmentation/logs"
+    from configs.common_cfg import MS_ROOT_DIR
+    log_dir = f"{MS_ROOT_DIR}/SS-projects/dinov3/tasks/segmentation/logs"
     clean_logs(log_dir, 2)

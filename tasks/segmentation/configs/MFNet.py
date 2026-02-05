@@ -17,7 +17,7 @@ def get_cfg(dataset_name=None):
     epochs = 50
     window_size = (256, 256)
     labels = get_labels(dataset_name)
-    ignore_index = len(labels) - 1
+    ignore_index = len(labels)
     # loss_fn = JointLoss(
     #     SoftCrossEntropyLoss(smooth_factor=0.05, ignore_index=ignore_index),
     #     DiceLoss(smooth=0.05, ignore_index=ignore_index), 1.0, 1.0)
@@ -26,7 +26,7 @@ def get_cfg(dataset_name=None):
 
     model = UNetFormer(
         num_classes=len(labels),
-        sam_checkpoint='/home/yyyj/Checkpoints/sam_vit_l_0b3195.pth')
+        sam_checkpoint=f'{MS_ROOT_DIR}/Checkpoints/sam_vit_l_0b3195.pth')
 
     # 根据GPU数量调整学习率
     if distributed.is_enabled():

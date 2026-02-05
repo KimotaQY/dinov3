@@ -19,10 +19,10 @@ def get_cfg(dataset_name=None):
     epochs = 50
     window_size = (256, 256)
     labels = get_labels(dataset_name)
-    ignore_index = len(labels) - 1
+    ignore_index = len(labels)
     loss_fn = SoftCrossEntropyLoss(ignore_index=ignore_index)
 
-    backbone_weights = "/home/yyyj/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
+    backbone_weights = f"{MS_ROOT_DIR}/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
 
     if backbone_weights is not None:
         backbone = dinov3_vitl16(weights=backbone_weights, pretrained=True)

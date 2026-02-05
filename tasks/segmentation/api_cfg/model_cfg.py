@@ -1,9 +1,10 @@
 # 模型配置
 MODEL = None
-pretrained_model_name = "/home/yyyj/Checkpoints/facebook/dinov3-vitl16-pretrain-sat493m"
-backbone_weights = "/home/yyyj/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
+MS_ROOT_DIR = "/home/yyyjvm"
+pretrained_model_name = f"{MS_ROOT_DIR}/Checkpoints/facebook/dinov3-vitl16-pretrain-sat493m"
+backbone_weights = f"{MS_ROOT_DIR}/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
 
-classification_model_path = "/home/yyyj/SS-projects/dinov3/tasks/segmentation/logs/YYYJ_20251031_062617/dinoseg_YYYJ_e95_mIoU28.02.pth"
+classification_model_path = f"{MS_ROOT_DIR}/SS-projects/dinov3/tasks/segmentation/logs/YYYJ_20251031_062617/dinoseg_YYYJ_e95_mIoU28.02.pth"
 
 LOG_FOLDER = "YYYJ_20251031_062617"  # 对应的模型检查点
 
@@ -29,4 +30,4 @@ PALETTE = {
 }
 
 # 影像文件路径
-FILE_ROOT = "/home/yyyj/SS-datasets/YYYJ_dataset/Desktop-vvgck54/20251105/"
+FILE_ROOT = f"{MS_ROOT_DIR}/SS-datasets/YYYJ_dataset/Desktop-vvgck54/20251105/"
