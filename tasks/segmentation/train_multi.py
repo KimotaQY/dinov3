@@ -6,7 +6,6 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from datetime import datetime
-from datasets import build_dataset
 
 # 添加项目根目录到 Python 路径中，以便可以导入 dinov3 模块
 project_root = os.path.dirname(
@@ -30,9 +29,11 @@ from utils.clean_logs import clean_logs
 from configs import get_cfg
 from configs.common_cfg import MS_ROOT_DIR
 
-DATASET_NAME = "Vaihingen"
-MODEL_NAME = "DINOv3"
-NUM_MODALITIES = 2
+from datasets import build_dataset
+
+DATASET_NAME = "EarthMiss"
+MODEL_NAME = ""
+NUM_MODALITIES = -1
 
 
 def get_local_rank():
@@ -220,16 +221,6 @@ def train(model,
                 optimizer.zero_grad()
                 logits = model(input)
 
-            # 确保标签值在有效范围内
-            invalid_mask = (label < 0) | (label > len(cfg.get("labels")) - 1)
-            if invalid_mask.any():
-                # print(
-                #     f"Found {invalid_mask.sum().item()} invalid label values")
-                # print(f"Invalid values: {label[invalid_mask].unique()}")
-                # 将无效值替换为0或其他默认值
-                label = label.clone()  # 创建副本避免就地修改
-                label[invalid_mask] = len(cfg.get("labels"))
-
             if MODEL_NAME == 'MultiSenseSeg':
                 loss = loss_fn(logits, label, e)
             else:
@@ -404,16 +395,6 @@ def test(model, test_loader, cfg):
                                        stride=(s_w, s_w),
                                        batch_size=cfg.get("batch_size", 4) * 4)
 
-        # 确保标签值在有效范围内
-        invalid_mask = (label < 0) | (label > len(cfg.get("labels")) - 1)
-        if invalid_mask.any():
-            # print(
-            #     f"Found {invalid_mask.sum().item()} invalid label values")
-            # print(f"Invalid values: {label[invalid_mask].unique()}")
-            # 将无效值替换为0或其他默认值
-            label = label.clone()  # 创建副本避免就地修改
-            label[invalid_mask] = len(cfg.get("labels"))
-
         pred = np.argmax(pred, axis=1)
         preds.append(pred)
         labels.append(label)
@@ -445,6 +426,10 @@ if __name__ == "__main__":
                         type=int,
                         default=2,
                         help='Number of modality to train')
+    parser.add_argument('--use-lora',
+                        type=bool,
+                        default=False,
+                        help='use lora or not')
     args = parser.parse_args()
 
     # 如果提供了模型名称参数，使用它；否则使用默认值
@@ -453,4 +438,4 @@ if __name__ == "__main__":
     if args.num_modalities:
         NUM_MODALITIES = args.num_modalities
 
-    main(num_modalities=NUM_MODALITIES)
+    main(num_modalities=NUM_MODALITIES, use_lora=args.use_lora)
