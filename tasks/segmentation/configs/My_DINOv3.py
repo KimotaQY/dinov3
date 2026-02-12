@@ -12,7 +12,7 @@ def get_cfg(model_name=None, dataset_name=None, **kwargs):
     if dataset_name is None:
         raise ValueError("Dataset name must be specified")
 
-    base_lr = 3e-4
+    base_lr = 1e-4
     batch_size = 8
     epochs = 50
     window_size = (512, 512)
@@ -23,10 +23,13 @@ def get_cfg(model_name=None, dataset_name=None, **kwargs):
         DiceLoss(smooth=0.05, ignore_index=ignore_index), 1.0, 1.0)
 
     # pretrained_model_name = f"{MS_ROOT_DIR}/Checkpoints/facebook/dinov3-vitl16-pretrain-sat493m"
+    backbone_type = "dinov3_vitl16"
     backbone_weights = f"{MS_ROOT_DIR}/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
     if model_name is not None:
         model = build_model(model_name=model_name,
                             backbone_weights=backbone_weights,
+                            backbone_type=backbone_type,
+                            freeze_backbone=True,
                             n_classes=len(labels),
                             use_lora=kwargs.get('use_lora'),
                             num_modalities=kwargs.get('num_modalities', 1))
