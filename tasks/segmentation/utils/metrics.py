@@ -114,29 +114,92 @@ class CombinedLoss(nn.Module):
         return ce, dice
 
 
-def metrics(predictions, gts, label_values, device='cuda'):
+def confusion_matrix_gpu(y_true, y_pred, labels=None, sample_weight=None):
+    """
+    GPU版本的混淆矩阵计算，基于sklearn的实现原理
+    """
+    # 转换为torch tensor并确保在GPU上
+    if isinstance(y_true, np.ndarray):
+        y_true = torch.from_numpy(y_true).long()
+    if isinstance(y_pred, np.ndarray):
+        y_pred = torch.from_numpy(y_pred).long()
+
+    # 确保在GPU上（如果有GPU）
+    if torch.cuda.is_available():
+        y_true = y_true.cuda()
+        y_pred = y_pred.cuda()
+        device = 'cuda'
+    else:
+        device = 'cpu'
+
+    # 处理labels - 向量化方式
+    if labels is None:
+        # 使用torch.unique获取所有唯一标签
+        all_labels = torch.cat([y_true, y_pred])
+        labels = torch.unique(all_labels).sort()[0]
+    else:
+        labels = torch.as_tensor(labels, device=device).long()
+
+    n_labels = len(labels)
+
+    # 创建标签到索引的映射（向量化）
+    # 使用searchsorted替代Python字典查找
+    y_true_indices = torch.searchsorted(labels, y_true)
+    y_pred_indices = torch.searchsorted(labels, y_pred)
+
+    # 处理不在labels中的值（标记为n_labels）
+    y_true_invalid = ~torch.isin(y_true, labels)
+    y_pred_invalid = ~torch.isin(y_pred, labels)
+
+    y_true_indices[y_true_invalid] = n_labels
+    y_pred_indices[y_pred_invalid] = n_labels
+
+    # 过滤有效索引
+    valid_mask = (y_true_indices < n_labels) & (y_pred_indices < n_labels)
+    y_true_filtered = y_true_indices[valid_mask]
+    y_pred_filtered = y_pred_indices[valid_mask]
+
+    # 处理sample_weight
+    if sample_weight is None:
+        weights = torch.ones(len(y_true_filtered),
+                             dtype=torch.float32,
+                             device=device)
+    else:
+        sample_weight = torch.as_tensor(sample_weight,
+                                        dtype=torch.float32,
+                                        device=device)
+        weights = sample_weight[valid_mask]
+
+    if len(y_true_filtered) == 0:
+        return torch.zeros((n_labels, n_labels),
+                           dtype=torch.float32,
+                           device=device)
+
+    # 核心优化：使用scatter_add_替代bincount（更高效）
+    cm = torch.zeros((n_labels, n_labels), dtype=torch.float32, device=device)
+
+    # 创建展平索引
+    flat_indices = y_true_filtered * n_labels + y_pred_filtered
+
+    # 使用scatter_add_累加权重
+    cm_flat = torch.zeros(n_labels * n_labels,
+                          dtype=torch.float32,
+                          device=device)
+    cm_flat.scatter_add_(0, flat_indices, weights)
+    cm = cm_flat.reshape(n_labels, n_labels)
+
+    return cm
+
+
+def metrics(predictions, gts, label_values):
     logger = logging.getLogger("dinov3seg")
 
-    # 转换为torch tensor并移至GPU
-    if isinstance(predictions, np.ndarray):
-        predictions = torch.from_numpy(predictions).long().to(device)
-    if isinstance(gts, np.ndarray):
-        gts = torch.from_numpy(gts).long().to(device)
-
-    num_classes = len(label_values)
-
-    # 计算混淆矩阵（GPU版本）
-    cm = torch.zeros((num_classes, num_classes),
-                     dtype=torch.long,
-                     device=device)
-
-    # 使用scatter_add_高效计算混淆矩阵
-    indices = gts * num_classes + predictions
-    cm_flat = torch.bincount(indices, minlength=num_classes * num_classes)
-    cm = cm_flat.reshape(num_classes, num_classes)
-
-    # 转回CPU进行后续计算（这些计算相对简单，CPU足够）
-    cm = cm.cpu().numpy()
+    cm = confusion_matrix(gts, predictions, labels=range(len(label_values)))
+    # 使用GPU计算混淆矩阵
+    # cm_tensor = confusion_matrix_gpu(gts,
+    #                                  predictions,
+    #                                  labels=range(len(label_values)))
+    # cm = cm_tensor.cpu().numpy()  # 转回numpy用于后续计算
 
     logger.info("Confusion matrix :")
     print(cm)
@@ -164,7 +227,10 @@ def metrics(predictions, gts, label_values, device='cuda'):
     logger.info("F1Score :")
     for l_id, score in enumerate(F1Score):
         logger.info("%s: %.4f" % (label_values[l_id], score))
-    F1Score = np.nanmean(F1Score[:(len(label_values) - 1)])
+    if "undefined" in label_values or "clutter" in label_values:
+        F1Score = np.nanmean(F1Score[:(len(label_values) - 1)])
+    else:
+        F1Score = np.nanmean(F1Score[:(len(label_values))])
     logger.info('mean F1Score: %.4f' % (F1Score))
     logger.info("---")
 
@@ -182,36 +248,24 @@ def metrics(predictions, gts, label_values, device='cuda'):
     logger.info("MIoU: ")
     for l_id, score in enumerate(MIoU):
         logger.info("%s: %.4f" % (label_values[l_id], score))
-    MIoU = np.nanmean(MIoU[:(len(label_values) - 1)])
+    if "undefined" in label_values or "clutter" in label_values:
+        MIoU = np.nanmean(MIoU[:(len(label_values) - 1)])
+    else:
+        MIoU = np.nanmean(MIoU[:(len(label_values))])
     logger.info('mean MIoU: %.4f' % (MIoU))
     logger.info("---")
 
     return MIoU, F1Score, kappa, accuracy
 
 
-def metrics_print_version(predictions, gts, label_values, device='cuda'):
+def metrics_print_version(predictions, gts, label_values):
     cm = confusion_matrix(gts, predictions, labels=range(len(label_values)))
 
-    # # 转换为torch tensor并移至GPU
-    # if isinstance(predictions, np.ndarray):
-    #     predictions = torch.from_numpy(predictions).long().to(device)
-    # if isinstance(gts, np.ndarray):
-    #     gts = torch.from_numpy(gts).long().to(device)
-
-    # num_classes = len(label_values)
-
-    # # 计算混淆矩阵（GPU版本）
-    # cm = torch.zeros((num_classes, num_classes),
-    #                  dtype=torch.long,
-    #                  device=device)
-
-    # # 使用scatter_add_高效计算混淆矩阵
-    # indices = gts * num_classes + predictions
-    # cm_flat = torch.bincount(indices, minlength=num_classes * num_classes)
-    # cm = cm_flat.reshape(num_classes, num_classes)
-
-    # # 转回CPU进行后续计算（这些计算相对简单，CPU足够）
-    # cm = cm.cpu().numpy()
+    # # 使用GPU计算混淆矩阵
+    # cm_tensor = confusion_matrix_gpu(gts,
+    #                                  predictions,
+    #                                  labels=range(len(label_values)))
+    # cm = cm_tensor.cpu().numpy()  # 转回numpy用于后续计算
 
     print("Confusion matrix :")
     print(cm)
@@ -242,11 +296,17 @@ def metrics_print_version(predictions, gts, label_values, device='cuda'):
     for l_id, (f1_score, iou_score) in enumerate(zip(F1Score, MIoU)):
         print("%s: %.2f / %.2f" %
               (label_values[l_id], f1_score * 100, iou_score * 100))
-    F1Score = np.nanmean(F1Score[:(len(label_values) - 1)])
+    if "undefined" in label_values or "clutter" in label_values:
+        F1Score = np.nanmean(F1Score[:(len(label_values) - 1)])
+    else:
+        F1Score = np.nanmean(F1Score[:(len(label_values))])
     print("---")
     print('mean F1Score: %.4f' % (F1Score))
     print("---")
-    MIoU = np.nanmean(MIoU[:(len(label_values) - 1)])
+    if "undefined" in label_values or "clutter" in label_values:
+        MIoU = np.nanmean(MIoU[:(len(label_values) - 1)])
+    else:
+        MIoU = np.nanmean(MIoU[:(len(label_values))])
     print('mean MIoU: %.4f' % (MIoU))
     print("---")
 
