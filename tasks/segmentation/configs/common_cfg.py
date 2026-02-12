@@ -16,8 +16,8 @@ def get_labels(dataset_name=None):
         ]
     elif dataset_name == "EarthMiss":
         labels = [
-            "Background", "Building", "Road", " Water", " Barren", " Forest",
-            " Agricultural", " Playground"
+            "Background", "Building", "Road", "Water", "Barren", "Forest",
+            "Agricultural", "Playground"
         ]
 
     return labels
