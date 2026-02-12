@@ -93,25 +93,6 @@ class EarthMiss_Dataset(torch.utils.data.Dataset):
                 for f in os.listdir(data_label_dir) if f.endswith(".tif")
             ])
 
-            # # 预检查文件有效性，过滤掉损坏的文件
-            # valid_indices = []
-            # for i, (rgb_file, label_file) in enumerate(
-            #         zip(self.rgb_files, self.label_files)):
-            #     try:
-            #         # 尝试打开文件检查是否有效
-            #         with imread(rgb_file) as img:
-            #             img.verify()
-            #         with imread(label_file) as img:
-            #             img.verify()
-            #         if self.sar_files and i < len(self.sar_files):
-            #             with imread(self.sar_files[i]) as img:
-            #                 img.verify()
-            #         valid_indices.append(i)
-            #     except Exception:
-            #         # 跳过损坏的文件
-            #         print(f"Warning: Skipping corrupted file {rgb_file}")
-            #         continue
-
         # Sanity check : raise an error if some files do not exist
         for file in self.rgb_files + self.label_files + self.sar_files:
             if not os.path.exists(file) and not os.path.isfile(file):
@@ -125,12 +106,19 @@ class EarthMiss_Dataset(torch.utils.data.Dataset):
         if normalize_type == "geo":
             self.imagenet_mean = (0.430, 0.411, 0.296)
             self.imagenet_std = (0.213, 0.156, 0.143)
+            # self.imagenet_mean = (0.485, 0.456, 0.406)
+            # self.imagenet_std = (0.229, 0.224, 0.225)
         elif normalize_type == "common":
             self.imagenet_mean = (0.485, 0.456, 0.406)
             self.imagenet_std = (0.229, 0.224, 0.225)
         else:
             self.imagenet_mean = None
             self.imagenet_std = None
+
+        # self.imagenet_mean = (0.43910831, 0.46440756, 0.45110319)
+        # self.imagenet_std = (0.28616032, 0.28621673, 0.32124605)
+        # self.sar_mean = (0.24823733)
+        # self.sar_std = (0.26746686)
 
     def __len__(self):
         interval_num = (256**2 / self.window_size[0]**2) * 16  # 256尺寸时为*16
@@ -155,8 +143,9 @@ class EarthMiss_Dataset(torch.utils.data.Dataset):
             if cached_label is not None:
                 label = cached_label
             else:
-                label = imread(self.label_files[random_idx]).astype(np.int64)
+                label = imread(self.label_files[random_idx]).astype(np.int32)
                 label = label - 1
+                label[label == -1] = 8
                 self.label_cache.put(random_idx, label)
 
             sar = None
@@ -168,7 +157,6 @@ class EarthMiss_Dataset(torch.utils.data.Dataset):
                 self.sar_cache.put(random_idx, sar)
 
             # Get a random patch
-            # data = data.transpose((2, 0, 1))
             x1, x2, y1, y2 = self.get_random_pos(data, self.window_size)
             if isinstance(data, np.ndarray):
                 data = data[x1:x2, y1:y2, :]
@@ -181,7 +169,6 @@ class EarthMiss_Dataset(torch.utils.data.Dataset):
                 sar = sar.crop((y1, x1, y2, x2)) if sar is not None else None
 
             # 弱增强
-            # data = data.transpose((1, 2, 0))
             data, label, sar = resize(data, label, sar, ratio_range=(0.5, 2.0))
             data, label, sar = crop(data, label, sar, size=self.window_size[0])
             data, label, sar = hflip(data, label, sar, p=0.5)
@@ -198,13 +185,10 @@ class EarthMiss_Dataset(torch.utils.data.Dataset):
             # label = np.asarray(self.convert_from_color(label), dtype='int64')
         else:
             data = imread(self.rgb_files[idx])
-            # data = np.array(data, dtype='float32').transpose((2, 0, 1))
 
-            label = imread(self.label_files[idx]).astype(np.int64)
+            label = imread(self.label_files[idx]).astype(np.int32)
             label = label - 1
-            # label_arr = np.array(label_img)
-            # label = np.asarray(self.convert_from_color(label_arr),
-            #                    dtype='int64')
+            label[label == -1] = 8
 
             sar = imread(self.sar_files[idx]) if len(
                 self.sar_files) > 0 else None
@@ -221,39 +205,33 @@ class EarthMiss_Dataset(torch.utils.data.Dataset):
                 data, self.imagenet_mean,
                 self.imagenet_std)  # Normalize with ImageNet mean and std
 
-        # 确保标签值在有效范围内
-        # invalid_mask = (label < 0)
-        # if invalid_mask.any():
-        #     # print(f"Found {invalid_mask.sum().item()} invalid label values")
-        #     # print(f"Invalid values: {label[invalid_mask].unique()}")
-        #     # 将无效值替换为0或其他默认值
-        #     label = label.clone()  # 创建副本避免就地修改
-        #     label[invalid_mask] = 255
-
         if sar is not None:
+            # if isinstance(sar, np.ndarray):
+            #     # 获取最小值和最大值
+            #     min_val = np.min(sar)
+            #     max_val = np.max(sar)
+            #     # 防止除零错误
+            #     if max_val > min_val:
+            #         sar = (sar - min_val) / (max_val - min_val)
+            #     else:
+            #         # 如果所有像素值都相同，设置为0（或保持原值）
+            #         sar = np.full_like(
+            #             sar, 0.0)  # 或者 sar = np.full_like(sar, min_val)
+
+            #     sar = np.ascontiguousarray(sar)
+            # else:
+            #     # 处理 PIL Image 对象
+            #     min_val, max_val = sar.getextrema()
+            #     if max_val > min_val:
+            #         sar = Image.eval(
+            #             sar, lambda x: (x - min_val) / (max_val - min_val))
+            #     else:
+            #         sar = Image.eval(sar, lambda x: min_val)
+
             if isinstance(sar, np.ndarray):
-                # 获取最小值和最大值
-                min_val = np.min(sar)
-                max_val = np.max(sar)
-                # 防止除零错误
-                if max_val > min_val:
-                    sar = (sar - min_val) / (max_val - min_val)
-                else:
-                    # 如果所有像素值都相同，设置为0（或保持原值）
-                    sar = np.full_like(
-                        sar, 0.0)  # 或者 sar = np.full_like(sar, min_val)
-
                 sar = np.ascontiguousarray(sar)
-            else:
-                # 处理 PIL Image 对象
-                min_val, max_val = sar.getextrema()
-                if max_val > min_val:
-                    sar = Image.eval(
-                        sar, lambda x: (x - min_val) / (max_val - min_val))
-                else:
-                    sar = Image.eval(sar, lambda x: min_val)
-
             sar = TF.to_tensor(sar)
+            sar = TF.normalize(sar, self.sar_mean, self.sar_std)
             return data, sar, label
         else:
             return data, label
