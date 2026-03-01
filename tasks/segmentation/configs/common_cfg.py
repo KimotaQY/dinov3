@@ -1,4 +1,4 @@
-MS_ROOT_DIR = "/home/yyyjvm"
+MS_ROOT_DIR = "/home/yyyj"
 
 
 def get_labels(dataset_name=None):
@@ -19,5 +19,7 @@ def get_labels(dataset_name=None):
             "Background", "Building", "Road", "Water", "Barren", "Forest",
             "Agricultural", "Playground"
         ]
+    elif dataset_name == "WHU":
+        labels = ["农田", "城市", "村庄", "水体", "森林", "道路", "其他"]
 
     return labels
