@@ -8,7 +8,7 @@ import timm
 import cv2
 import torch.autograd as autograd
 from .models.sam import sam_model_registry
-from .cfg import parse_args
+from .cfg import Args
 import matplotlib.pyplot as plt
 
 
@@ -688,7 +688,7 @@ class UNetFormer(nn.Module):
                  num_classes=6,
                  sam_checkpoint=None):
         super().__init__()
-        args = parse_args()
+        args = Args()
         # TODO: change vit path
         # self.sam = sam_model_registry["vit_b"](args,checkpoint='weights/sam_vit_b_01ec64.pth')
         self.sam = sam_model_registry["vit_l"](args, checkpoint=sam_checkpoint)

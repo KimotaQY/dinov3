@@ -16,14 +16,14 @@ def parse_args():
                         type=str,
                         default='transunet',
                         help='net type')
-    parser.add_argument('-mod',
-                        type=str,
-                        default='sam_adpt',
-                        help='mod type:seg,cls,val_ad')
     # parser.add_argument('-mod',
     #                     type=str,
-    #                     default='sam_lora',
+    #                     default='sam_adpt',
     #                     help='mod type:seg,cls,val_ad')
+    parser.add_argument('-mod',
+                        type=str,
+                        default='sam_lora',
+                        help='mod type:seg,cls,val_ad')
     parser.add_argument('-exp_name',
                         default='msa_test_isic',
                         type=str,
@@ -157,3 +157,51 @@ def parse_args():
 
 
 # required=True,
+
+
+class Args:
+
+    def __init__(self):
+        self.net = 'sam'
+        self.baseline = 'unet'
+        self.encoder = 'default'
+        self.seg_net = 'transunet'
+        self.mod = 'sam_lora'
+        self.exp_name = 'msa_test_isic'
+        self.type = 'map'
+        self.vis = None
+        self.reverse = False
+        self.pretrain = False
+        self.val_freq = 5
+        self.gpu = True
+        self.gpu_device = 0
+        self.sim_gpu = 0
+        self.epoch_ini = 1
+        self.image_size = 1024
+        self.out_size = 256
+        self.patch_size = 2
+        self.dim = 512
+        self.depth = 1
+        self.heads = 16
+        self.mlp_dim = 1024
+        self.w = 4
+        self.b = 2
+        self.s = True
+        self.warm = 1
+        self.lr = 1e-4
+        self.uinch = 1
+        self.imp_lr = 3e-4
+        self.weights = 0
+        self.base_weights = 0
+        self.sim_weights = 0
+        self.distributed = 'none'
+        self.dataset = 'isic'
+        self.sam_ckpt = None
+        self.thd = False
+        self.chunk = None
+        self.num_sample = 4
+        self.roi_size = 96
+        self.evl_chunk = None
+        self.mid_dim = None
+        self.multimask_output = 1
+        self.data_path = '../data'
