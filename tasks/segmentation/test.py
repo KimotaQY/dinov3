@@ -1,4 +1,3 @@
-import importlib
 import os
 import sys
 import torch
@@ -19,25 +18,89 @@ from utils.inference import slide_inference
 
 # 选择对应检查点 - 使用变量方式导入
 # 从环境变量获取项目ID，如果没有设置则使用默认值
-# DATASET_NAME = "Potsdam"
-DATASET_NAME = "Vaihingen"
-MODEL_NAME = "DINOv3"
-NUM_MODALITIES = 2
-
-PROJECT_ID = os.environ.get('DINO_PROJECT_ID',
-                            MODEL_NAME + ".Vaihingen_20260203_092721")
-# 动态导入模块
-train_distr_module = importlib.import_module(
-    f'logs.{PROJECT_ID}.proj_files.train_distr')
-datasets_module = importlib.import_module(
-    f'logs.{PROJECT_ID}.proj_files.datasets')
-# cfg_module = importlib.import_module(f'logs.{PROJECT_ID}.proj_files.configs')
+DATASET_NAME = ""
+MODEL_NAME = ""
+NUM_MODALITIES = -1
 
 # 从动态导入的模块中获取需要的变量和类
 from tasks.segmentation.datasets import build_dataset
 from configs import get_cfg
+from configs.common_cfg import MS_ROOT_DIR
 
-classification_model_path = "/home/yyyj/SS-projects/dinov3/tasks/segmentation/logs/DINOv3/Vaihingen_20260203_092721/DINOv3_Vaihingen_e40_mIoU83.58.pth"
+from PIL import Image
+
+
+def save_prediction_as_image(pred, label, save_dir, index):
+    """将预测结果保存为图像"""
+
+    if DATASET_NAME == "Vaihingen" or DATASET_NAME == "Potsdam":
+        palette = np.array(
+            [
+                [255, 255, 255],  # 0: Impervious surfaces (white)
+                [0, 0, 255],  # 1: Buildings (blue)
+                [0, 255, 255],  # 2: Low vegetation (cyan)
+                [0, 255, 0],  # 3: Trees (green)
+                [255, 255, 0],  # 4: Cars (yellow)
+                [255, 0, 0],  # 5: Clutter (red)
+                [0, 0, 0]  # 6: Undefined (black)
+            ],
+            dtype=np.uint8)
+    elif DATASET_NAME == "YYYJ":
+        palette = np.array(
+            [
+                # 地基建设 → 棕色系
+                [102, 50, 18],  # 0: 深褐色
+                [175, 117, 71],  # 1: 赭石色
+                [214, 171, 131],  # 2: 浅土黄色
+                [231, 212, 190],  # 3: 极浅的米黄色
+
+                # 施工道路 → 灰色系
+                [64, 64, 64],  # 4: 深灰色
+                [153, 153, 153],  # 5: 中灰色
+
+                # 风电施工 → 蓝色系
+                [18, 74, 143],  # 6: 深蓝色
+                [125, 177, 230],  # 7: 天蓝色
+
+                # 独立类别 - 高区分度配色
+                [255, 191, 0],  # 8: 琥珀色/金黄色
+                [54, 140, 48],  # 9: 深绿色
+                [212, 50, 125],  # 10: 洋红色/品红色
+                [128, 78, 191],  # 11: 中等深度的紫色
+                [188, 155, 218],  # 12: 浅薰衣草紫
+                [220, 60, 60],  # 13: 鲜红色
+                [255, 255, 255],  # 14: 白色
+                [0, 0, 0]  # 15: 黑色
+            ],
+            dtype=np.uint8)
+    elif DATASET_NAME == "WHU":
+        palette = np.array(
+            [
+                [204, 102, 1],  # 0: farmland
+                [255, 0, 0],  # 1: city
+                [255, 255, 0],  # 2: village
+                [0, 0, 255],  # 3: water
+                [85, 166, 1],  # 4: forest
+                [93, 255, 255],  # 5: road
+                [152, 102, 153],  # 6: others
+                [0, 0, 0]
+            ],
+            dtype=np.uint8)
+
+    # 确保保存目录存在
+    os.makedirs(save_dir, exist_ok=True)
+
+    # 应用颜色映射到预测结果
+    pred_colored = palette[pred]
+    label_colored = palette[label]
+
+    # 转换为PIL图像并保存
+    pred_img = Image.fromarray(pred_colored.squeeze().astype(np.uint8), 'RGB')
+    label_img = Image.fromarray(label_colored.squeeze().astype(np.uint8),
+                                'RGB')
+
+    pred_img.save(os.path.join(save_dir, f"{index}_prediction.png"))
+    label_img.save(os.path.join(save_dir, f"{index}_ground_truth.png"))
 
 
 def get_local_rank():
@@ -109,6 +172,12 @@ def test(model, test_loader, cfg):
     window_size = cfg.get("window_size")
     classes = cfg.get("labels")
 
+    # 创建保存结果的目录
+    modality = "uni" if NUM_MODALITIES == 1 else "multi"
+    save_dir = f"./vis_results/{MODEL_NAME}_{DATASET_NAME}_{modality}"
+    os.makedirs(save_dir, exist_ok=True)
+    sample_index = 0
+
     iterations = tqdm(test_loader, disable=not distributed.is_main_process())
     for batch in iterations:
         if NUM_MODALITIES > 1:
@@ -141,6 +210,10 @@ def test(model, test_loader, cfg):
         preds.append(pred)
         labels.append(label)
 
+        # 保存预测结果为图像
+        save_prediction_as_image(pred, label.numpy(), save_dir, sample_index)
+        sample_index += 1
+
     MIoU, F1, Kappa, Acc = metrics(
         np.concatenate([p.ravel() for p in preds]),
         np.concatenate([p.ravel() for p in labels]).ravel(), classes)
@@ -151,24 +224,100 @@ def test(model, test_loader, cfg):
     return detailed_metrics
 
 
-# 设置调试环境变量
-# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-# from tasks.segmentation.models.UMFormer.UMFormer import UMFormer
 if __name__ == "__main__":
-    NUM_MODALITIES = 1
-    main(num_modalities=NUM_MODALITIES)
-    # local_model_dir = "/home/yyyj/Checkpoints/timm/resnet18.fb_swsl_ig1b_ft_in1k"
-    # net = UMFormer(6, local_model_dir=local_model_dir)
-    # net = net.cuda(0)
-    # dummy_input = torch.randn(1, 3, 1024, 1024).cuda(0).contiguous()
-    # # flops, params = profile(net, (dummy_input, ))
-    # # print('flops: ', flops, 'params: ', params)
-    # # print('flops: %.2f M, params: %.2f M' %
-    # #       (flops / 1000000.0, params / 1000000.0))
-    # # print('***************************')
-    # # # x = torch.rand(2, 3, 512, 512).to(device)
-    # # total = sum([param.nelement() for param in net.parameters()])  # 计算总参数量
-    # # print("model size:", total / 1000 / 1000, "M")
-    # # print('***************************')
-    # y = net(dummy_input)
-    # print(y.size())
+    test_models_list = [
+        # {
+        #     "model_name":
+        #     "DINOv3_Baseline",
+        #     "dataset_name":
+        #     "Vaihingen",
+        #     "modality":
+        #     2,
+        #     "classification_model_path":
+        #     f"/home/{MS_ROOT_DIR}/SS-projects/dinov3/tasks/segmentation/logs/DINOv3_Baseline/Vaihingen_20260201_062327/DINOv3_Baseline_Vaihingen_e50_mIoU69.22.pth"
+        # },
+        # {
+        #     "model_name":
+        #     "DINOv3_Adapter",
+        #     "dataset_name":
+        #     "Vaihingen",
+        #     "modality":
+        #     2,
+        #     "classification_model_path":
+        #     f"/home/{MS_ROOT_DIR}/SS-projects/dinov3/tasks/segmentation/logs/DINOv3_Adapter/Vaihingen_20260204_151138/DINOv3_Adapter_Vaihingen_e50_mIoU71.68.pth"
+        # },
+        # {
+        #     "model_name":
+        #     "DINOv3_FRM",
+        #     "dataset_name":
+        #     "Vaihingen",
+        #     "modality":
+        #     2,
+        #     "classification_model_path":
+        #     f"/home/{MS_ROOT_DIR}/SS-projects/dinov3/tasks/segmentation/logs/DINOv3_FRM/Vaihingen_20260201_104742/DINOv3_FRM_Vaihingen_e45_mIoU80.65.pth"
+        # },
+        # {
+        #     "model_name":
+        #     "DINOv3_MMFF",
+        #     "dataset_name":
+        #     "Vaihingen",
+        #     "modality":
+        #     2,
+        #     "classification_model_path":
+        #     f"/home/{MS_ROOT_DIR}/SS-projects/dinov3/tasks/segmentation/logs/DINOv3_MMFF/Vaihingen_20260201_183541/DINOv3_MMFF_Vaihingen_e50_mIoU80.72.pth"
+        # },
+        # {
+        #     "model_name":
+        #     "DINOv3_PRN",
+        #     "dataset_name":
+        #     "Vaihingen",
+        #     "modality":
+        #     2,
+        #     "classification_model_path":
+        #     f"/home/{MS_ROOT_DIR}/SS-projects/dinov3/tasks/segmentation/logs/DINOv3_PRN/Vaihingen_20260201_125125/DINOv3_PRN_Vaihingen_e50_mIoU79.25.pth"
+        # },
+        # {
+        #     "model_name":
+        #     "DINOv3_Adapter_FRM",
+        #     "dataset_name":
+        #     "Vaihingen",
+        #     "modality":
+        #     2,
+        #     "classification_model_path":
+        #     f"/home/{MS_ROOT_DIR}/SS-projects/dinov3/tasks/segmentation/logs/DINOv3_Adapter_FRM/Vaihingen_20260204_165757/DINOv3_Adapter_FRM_Vaihingen_e20_mIoU82.82.pth"
+        # },
+        # {
+        #     "model_name":
+        #     "DINOv3_Adapter_FRM_MMFF",
+        #     "dataset_name":
+        #     "Vaihingen",
+        #     "modality":
+        #     2,
+        #     "classification_model_path":
+        #     f"/home/{MS_ROOT_DIR}/SS-projects/dinov3/tasks/segmentation/logs/DINOv3_Adapter_FRM_MMFF/Vaihingen_20260204_232845/DINOv3_Adapter_FRM_MMFF_Vaihingen_e40_mIoU83.04.pth"
+        # },
+        {
+            "model_name":
+            "DINOv3",
+            "dataset_name":
+            "Vaihingen",
+            "modality":
+            2,
+            "classification_model_path":
+            f"/home/{MS_ROOT_DIR}/SS-projects/dinov3/tasks/segmentation/logs/DINOv3/Vaihingen_20251123_043510/DINOv3_Vaihingen_e40_mIoU83.6.pth"
+        },
+    ]
+
+    for model_cfg in test_models_list:
+        MODEL_NAME = model_name = model_cfg.get("model_name")
+        DATASET_NAME = dataset_name = model_cfg.get("dataset_name")
+        NUM_MODALITIES = modality = model_cfg.get("modality")
+        classification_model_path = model_cfg.get("classification_model_path")
+
+        print("=" * 50)
+        print(f"Testing model: {model_name}")
+        print(f"Dataset: {dataset_name}")
+        print(f"Modality: {modality}")
+        print("=" * 50)
+
+        main(num_modalities=NUM_MODALITIES)
