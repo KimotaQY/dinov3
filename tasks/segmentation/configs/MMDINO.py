@@ -2,7 +2,7 @@ import torch.optim as optim
 
 from losses import *
 from .common_cfg import *
-from tasks.segmentation.models.My_DINO.dino_segment import build_model
+from models.MMDINO.dino_segment import build_model
 
 # 导入分布式训练相关模块
 import dinov3.distributed as distributed
@@ -22,9 +22,17 @@ def get_cfg(model_name=None, dataset_name=None, **kwargs):
         SoftCrossEntropyLoss(smooth_factor=0.05, ignore_index=ignore_index),
         DiceLoss(smooth=0.05, ignore_index=ignore_index), 1.0, 1.0)
 
-    # pretrained_model_name = f"{MS_ROOT_DIR}/Checkpoints/facebook/dinov3-vitl16-pretrain-sat493m"
-    backbone_type = "dinov3_vitl16"
-    backbone_weights = f"{MS_ROOT_DIR}/Checkpoints/facebook/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"
+    backbone_type = kwargs.get('backbone_type', "dinov3_vits16")
+    backbone_weights_dict = {
+        "dinov3_vits16": "dinov3_vits16_pretrain_lvd1689m-08c60483.pth",
+        "dinov3_vits16plus":
+        "dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth",
+        "dinov3_vitb16": "dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth",
+        "dinov3_vitl16": "dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth",
+        "dinov3_vit7b16": "dinov3_vit7b16_pretrain_sat493m-a6675841.pth",
+    }
+    backbone_weights = f"{MS_ROOT_DIR}/Checkpoints/facebook/" + backbone_weights_dict[
+        backbone_type]
     if model_name is not None:
         model = build_model(model_name=model_name,
                             backbone_weights=backbone_weights,
@@ -32,6 +40,7 @@ def get_cfg(model_name=None, dataset_name=None, **kwargs):
                             freeze_backbone=True,
                             n_classes=len(labels),
                             use_lora=kwargs.get('use_lora'),
+                            r=kwargs.get('r'),
                             num_modalities=kwargs.get('num_modalities', 1))
     else:
         raise ValueError("Model name not recognized")

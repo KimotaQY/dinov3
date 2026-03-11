@@ -2,12 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils.Net import FeatureReinforcementModule
-from utils.HaarFusion import Fusion as HaarFusion
-from utils.GCBAM import GCBAM
-from utils.PKIBlock import Poly_Kernel_Inception_Block
-from utils.CBAM import CBAM
-
 
 class ConvBNReLU(nn.Sequential):
 
@@ -32,6 +26,229 @@ class ConvBNReLU(nn.Sequential):
         super().__init__(*layers)
 
 
+class FeatureReinforcementModule(nn.Module):
+
+    def __init__(self, in_d=None, out_d=64, drop_rate=0):
+        super(FeatureReinforcementModule, self).__init__()
+        if in_d is None:
+            raise ValueError("in_d must be provided")
+        self.in_d = in_d
+        self.mid_d = out_d // 2
+        self.out_d = out_d
+
+        # Define all conv_scale modules dynamically using a loop
+        self.conv_scales = nn.ModuleDict()
+        for scale in range(2, 6):  # For scales 2 to 5
+            for i in range(2, 6):  # For each conv_scale1_c2 ... conv_scale5_c5
+                key = f"conv_scale{i}_c{scale}"
+                self.conv_scales[key] = self._create_conv_block(
+                    self.in_d[scale - 1],
+                    self.mid_d,
+                    scale=i,
+                    orig_scale=scale)
+
+        # Fusion layers
+        self.conv_aggregation_s2 = FeatureFusionModule(self.mid_d * 4,
+                                                       self.in_d[1],
+                                                       self.out_d, drop_rate)
+        self.conv_aggregation_s3 = FeatureFusionModule(self.mid_d * 4,
+                                                       self.in_d[2],
+                                                       self.out_d, drop_rate)
+        self.conv_aggregation_s4 = FeatureFusionModule(self.mid_d * 4,
+                                                       self.in_d[3],
+                                                       self.out_d, drop_rate)
+        self.conv_aggregation_s5 = FeatureFusionModule(self.mid_d * 4,
+                                                       self.in_d[4],
+                                                       self.out_d, drop_rate)
+
+    def _create_conv_block(self, in_channels, mid_channels, scale, orig_scale):
+        layers = []
+        if scale > orig_scale:  # Pooling for scales > 1
+            layers.append(
+                nn.MaxPool2d(
+                    kernel_size=2**(scale - orig_scale),
+                    stride=2**(scale - orig_scale),
+                ))
+
+        if scale == orig_scale:
+            layers.extend([
+                nn.Conv2d(in_channels,
+                          mid_channels,
+                          kernel_size=3,
+                          stride=1,
+                          padding=1),
+                nn.BatchNorm2d(mid_channels),
+                nn.ReLU(inplace=True),
+            ])
+        elif scale != orig_scale:
+            layers.extend([
+                nn.Conv2d(in_channels, mid_channels, kernel_size=1, stride=1),
+                nn.BatchNorm2d(mid_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(
+                    mid_channels,
+                    mid_channels,
+                    kernel_size=3,
+                    stride=1,
+                    padding=1,
+                    groups=mid_channels,
+                ),
+                nn.BatchNorm2d(mid_channels),
+                nn.ReLU(inplace=True),
+            ])
+
+        return nn.Sequential(*layers)
+
+    def forward(self, c2, c3, c4, c5):
+        # Handle each scale's forward pass dynamically
+        def process_scale(c, scale_idx):
+            scale_outputs = []
+            for i in range(2, 6):  # For scales 2 to 5
+                key = f"conv_scale{i}_c{scale_idx + 2}"
+                output = self.conv_scales[key](c)
+                if i < scale_idx + 2:  # Interpolate as needed
+                    output = F.interpolate(
+                        output,
+                        scale_factor=(
+                            2**(scale_idx + 2 - i),
+                            2**(scale_idx + 2 - i),
+                        ),
+                        mode="bilinear",
+                    )
+                scale_outputs.append(output)
+            return scale_outputs
+
+        # Get outputs for all input features
+        c2_scales = process_scale(c2, 0)
+        c3_scales = process_scale(c3, 1)
+        c4_scales = process_scale(c4, 2)
+        c5_scales = process_scale(c5, 3)
+
+        # Aggregation and fusion
+        s2 = self.conv_aggregation_s2(
+            torch.cat([c2_scales[0], c3_scales[0], c4_scales[0], c5_scales[0]],
+                      dim=1),
+            c2,
+        )
+        s3 = self.conv_aggregation_s3(
+            torch.cat([c2_scales[1], c3_scales[1], c4_scales[1], c5_scales[1]],
+                      dim=1),
+            c3,
+        )
+        s4 = self.conv_aggregation_s4(
+            torch.cat([c2_scales[2], c3_scales[2], c4_scales[2], c5_scales[2]],
+                      dim=1),
+            c4,
+        )
+        s5 = self.conv_aggregation_s5(
+            torch.cat([c2_scales[3], c3_scales[3], c4_scales[3], c5_scales[3]],
+                      dim=1),
+            c5,
+        )
+
+        return s2, s3, s4, s5
+
+
+class FeatureFusionModule(nn.Module):
+
+    def __init__(self, fuse_d, in_d, out_d, drop_rate):
+        super(FeatureFusionModule, self).__init__()
+        self.fuse_d = fuse_d
+        self.in_d = in_d
+        self.out_d = out_d
+        self.conv_fuse = nn.Sequential(
+            nn.Conv2d(self.fuse_d, self.fuse_d, kernel_size=1, stride=1),
+            nn.BatchNorm2d(self.fuse_d),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(
+                self.fuse_d,
+                self.fuse_d,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                groups=self.fuse_d,
+            ),
+            nn.BatchNorm2d(self.fuse_d),
+            nn.ReLU(inplace=True),
+            # nn.Dropout(drop_rate),
+            nn.Conv2d(self.fuse_d, self.out_d, kernel_size=1, stride=1),
+            nn.BatchNorm2d(self.out_d),
+        )
+        self.conv_identity = nn.Conv2d(self.in_d, self.out_d, kernel_size=1)
+        self.relu = nn.ReLU(inplace=True)
+
+        # # 自适应权重模块
+        # self.gap = nn.AdaptiveAvgPool2d(1)
+        # self.softmax = nn.Softmax(dim=2)
+        # self.Sigmoid = nn.Sigmoid()
+
+        # self.Conv2 = nn.Sequential(
+        #     nn.Conv2d(
+        #         self.fuse_d // 4,
+        #         self.fuse_d // 4,
+        #         kernel_size=1,
+        #         padding=0,
+        #         dilation=1,
+        #         bias=False,
+        #     ))
+        # self.Conv3 = nn.Sequential(
+        #     nn.Conv2d(
+        #         self.fuse_d // 4,
+        #         self.fuse_d // 4,
+        #         kernel_size=1,
+        #         padding=0,
+        #         dilation=1,
+        #         bias=False,
+        #     ))
+        # self.Conv4 = nn.Sequential(
+        #     nn.Conv2d(
+        #         self.fuse_d // 4,
+        #         self.fuse_d // 4,
+        #         kernel_size=1,
+        #         padding=0,
+        #         dilation=1,
+        #         bias=False,
+        #     ))
+        # self.Conv5 = nn.Sequential(
+        #     nn.Conv2d(
+        #         self.fuse_d // 4,
+        #         self.fuse_d // 4,
+        #         kernel_size=1,
+        #         padding=0,
+        #         dilation=1,
+        #         bias=False,
+        #     ))
+
+    def forward(self, c_fuse, c):
+        # # =====自适应权重计算=====
+        # c2, c3, c4, c5 = torch.chunk(c_fuse, chunks=4, dim=1)
+
+        # # 计算多尺度权重
+        # c2_weight = self.Conv2(self.gap(c2))
+        # c3_weight = self.Conv3(self.gap(c3))
+        # c4_weight = self.Conv4(self.gap(c4))
+        # c5_weight = self.Conv5(self.gap(c5))
+
+        # weight = torch.cat([c2_weight, c3_weight, c4_weight, c5_weight], 2)
+        # weight = self.softmax(self.Sigmoid(weight))
+
+        # # 调整权重维度
+        # c2_weight = torch.unsqueeze(weight[:, :, 0], 2)
+        # c3_weight = torch.unsqueeze(weight[:, :, 1], 2)
+        # c4_weight = torch.unsqueeze(weight[:, :, 2], 2)
+        # c5_weight = torch.unsqueeze(weight[:, :, 3], 2)
+
+        # c_fuse = torch.cat(
+        #     [c2 * c2_weight, c3 * c3_weight, c4 * c4_weight, c5 * c5_weight],
+        #     dim=1)
+        # # ======自适应权重 End======
+
+        c_fuse = self.conv_fuse(c_fuse)
+        c_out = self.relu(c_fuse + self.conv_identity(c))
+
+        return c_out
+
+
 class SqueezeAndExcitation(nn.Module):
 
     def __init__(self,
@@ -44,6 +261,13 @@ class SqueezeAndExcitation(nn.Module):
                       kernel_size=1), activation,
             nn.Conv2d(channel // reduction, channel, kernel_size=1),
             nn.Sigmoid())
+
+        ### for testing
+        # self.fc = nn.Sequential(
+        #     nn.Conv2d(channel, channel // reduction, kernel_size=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(channel // reduction, channel, kernel_size=1),
+        #     nn.Sigmoid())
 
     def forward(self, x):
         weighting = F.adaptive_avg_pool2d(x, 1)
@@ -87,7 +311,7 @@ class ProgressiveRefinementNeck(nn.Module):
 
     def __init__(self, channels_list, num_stages=1):
         """
-        PRN模块初始化 - 对应论文中的P2-P5三个尺度
+        PRN模块初始化 - 对应P2-P5三个尺度
         
         Args:
             channels_list: 各层级特征图的通道数列表 [C2, C3, C4, C5]
@@ -96,7 +320,7 @@ class ProgressiveRefinementNeck(nn.Module):
         super(ProgressiveRefinementNeck, self).__init__()
         self.num_stages = num_stages
 
-        # 初始特征融合卷积 (对应公式1)
+        # 初始特征融合卷积
         self.td_convs = nn.ModuleList([
             nn.Conv2d(channels_list[i + 1] + channels_list[i],
                       channels_list[i],
@@ -140,7 +364,7 @@ class ProgressiveRefinementNeck(nn.Module):
 
     def forward(self, backbone_features):
         """
-        PRN前向传播 - 对应论文中的P2-P5流程
+        PRN前向传播 - 对应P2-P5流程
         
         Args:
             backbone_features: 主干网络特征 [P2_in, P3_in, P4_in, P5_in]
@@ -164,18 +388,18 @@ class ProgressiveRefinementNeck(nn.Module):
         P2_refine = P2_td
 
         for stage in range(self.num_stages):
-            # 下采样P2_td并与P3_in拼接 (对应公式2)
+            # 下采样P2_td并与P3_in拼接
             P3_td1 = self.reuse_convs[0](torch.cat(
                 [self.resize(P2_refine, P3_in.shape[-2:]), P3_in], dim=1))
 
-            # 上采样P3_td1并与P2_td、P2_in拼接 (对应公式3)
+            # 上采样P3_td1并与P2_td、P2_in拼接
             resize_ = self.resize(P3_td1, P2_in.shape[-2:])
             cat_feature = torch.cat([resize_, P2_td, P2_in], dim=1)
             P2_refine = self.reuse_convs[1](cat_feature)
             # P2_refine = self.reuse_convs[1](torch.cat(
             #     [self.resize(P3_td1, P2_in.shape[-2:]), P2_td, P2_in], dim=1))
 
-        # === 步骤3: 输出生成 (对应公式4-6) ===
+        # === 步骤3: 输出生成 ===
         # P4_out: 从精化后的P2下采样得到
         P4_out = self.out_convs_4(self.resize(P2_refine, P4_in.shape[-2:]))
 

@@ -5,10 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from transformers import AutoImageProcessor, AutoModel
-
 from .linear_decoder import LinearHead
-from .fpn_decoder import FPNDecoder
 from .prn_decoder import Decoder, Decoder_FRM, Decoder_PRN, Decoder_MMFF, Decoder_FRM_MMFF, Decoder_PRN_MMFF, Decoder_FRM_PRN
 from .sample_adapter import SampleAdapter
 from .lora import LoRA
@@ -19,7 +16,7 @@ project_root = os.path.dirname(
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from dinov3.hub.backbones import dinov3_vitl16, dinov3_vits16plus, dinov3_vitb16
+from dinov3.hub.backbones import dinov3_vitl16, dinov3_vits16plus, dinov3_vitb16, dinov3_vits16, dinov3_vit7b16
 
 # 添加项目根目录到 Python 路径中，以便可以导入 dinov3 模块
 deps_path = os.path.join(os.path.dirname(__file__), "task/segmentation")
@@ -55,10 +52,11 @@ class DINOSegmentModule(nn.Module):
         super().__init__()
 
         dinov3_vits_dict = {
-            "dinov3_vits16": dinov3_vitl16,
+            "dinov3_vits16": dinov3_vits16,
             "dinov3_vits16plus": dinov3_vits16plus,
             "dinov3_vitb16": dinov3_vitb16,
             "dinov3_vitl16": dinov3_vitl16,
+            "dinov3_vit7b16": dinov3_vit7b16
         }
         dinov3_vit = dinov3_vits_dict[backbone_type]
         self.backbone_type = backbone_type
@@ -158,20 +156,25 @@ class DINOSegmentModule(nn.Module):
         scale_factors = [4, 2, 1, 0.5]
 
         if len(modalities) == 1:
-            outputs = self.backbone.get_intermediate_layers(
-                x, n=BACKBONE_INTERMEDIATE_LAYERS[self.backbone_type])
-
             if self.adapter is not None:
+                with torch.autocast("cuda", torch.float32):
+                    outputs = self.backbone.get_intermediate_layers(
+                        x, n=BACKBONE_INTERMEDIATE_LAYERS[self.backbone_type])
                 # 使用适配器处理多尺度特征
                 multi_scale_features = self.adapter(outputs,
                                                     patch_h=patch_h,
                                                     patch_w=patch_w)
             else:
+                with torch.autocast("cuda", torch.float32):
+                    outputs = self.backbone.get_intermediate_layers(
+                        x,
+                        n=BACKBONE_INTERMEDIATE_LAYERS[self.backbone_type],
+                        reshape=True)
                 # 直接处理中间层输出
                 multi_scale_features = []
                 for i, output in enumerate(outputs):
-                    output = output.permute(0, 2, 1).reshape(
-                        (output.shape[0], output.shape[-1], patch_h, patch_w))
+                    # output = output.permute(0, 2, 1).reshape(
+                    #     (output.shape[0], output.shape[-1], patch_h, patch_w))
 
                     if i < len(scale_factors):
                         output = F.interpolate(output,

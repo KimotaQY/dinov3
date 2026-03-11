@@ -1,5 +1,5 @@
 from .UMFormer import get_cfg as get_UMFormer_cfg
-from .My_DINOv3 import get_cfg as get_DINOv3_cfg
+from .MMDINO import get_cfg as get_DINOv3_cfg
 from .SegDINO import get_cfg as get_SegDINO_cfg
 from .MFNet import get_cfg as get_MFNet_cfg
 from .Mask2Former import get_cfg as get_Mask2Former_cfg
@@ -9,7 +9,7 @@ from .RS3Mamba import get_cfg as get_RS3Mamba_cfg
 from .CMTFNet import get_cfg as get_CMTFNet_cfg
 from .MultiSenseSeg import get_cfg as get_MultiSenseSeg_cfg
 from .ESANet import get_cfg as get_ESANet_cfg
-from .FTransUNet import get_cfg as get_FTransUNet_cfg
+# from .FTransUNet import get_cfg as get_FTransUNet_cfg
 from .CMGFNet import get_cfg as get_CMGFNet_cfg
 from .SpectralGPT import get_cfg as get_SpectralGPT_cfg
 from .SynFSNet import get_cfg as get_SynFSNet_cfg
@@ -43,8 +43,8 @@ def get_cfg(model_name=None, dataset_name=None, **kwargs):
         cfg = get_MultiSenseSeg_cfg(dataset_name)
     elif model_name == 'ESANet':
         cfg = get_ESANet_cfg(dataset_name)
-    elif model_name == 'FTransUNet':
-        cfg = get_FTransUNet_cfg(dataset_name)
+    # elif model_name == 'FTransUNet':
+    #     cfg = get_FTransUNet_cfg(dataset_name)
     elif model_name == 'CMGFNet':
         cfg = get_CMGFNet_cfg(dataset_name)
     elif model_name == 'SynFSNet':
