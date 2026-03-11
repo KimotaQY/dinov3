@@ -31,7 +31,7 @@ from configs.common_cfg import MS_ROOT_DIR
 
 from datasets import build_dataset
 
-DATASET_NAME = "EarthMiss"
+DATASET_NAME = ""
 MODEL_NAME = ""
 NUM_MODALITIES = -1
 
@@ -110,8 +110,9 @@ def main(**kwargs):
                                                batch_size=batch_size,
                                                shuffle=shuffle,
                                                sampler=train_sampler,
-                                               num_workers=8,
-                                               pin_memory=False)
+                                               num_workers=4,
+                                               pin_memory=False,
+                                               persistent_workers=True)
 
     test_dataset = build_dataset(
         DATASET_NAME,
@@ -422,14 +423,19 @@ if __name__ == "__main__":
                         type=str,
                         default='DINOv3',
                         help='Name of the model to train')
+    parser.add_argument('--dataset-name',
+                        type=str,
+                        default='WHU',
+                        help='Dataset of the model to train')
     parser.add_argument('--num-modalities',
                         type=int,
-                        default=2,
+                        default=1,
                         help='Number of modality to train')
     parser.add_argument('--use-lora',
                         type=bool,
                         default=False,
                         help='use lora or not')
+    parser.add_argument('--r', type=int, default=3, help='lora r')
     args = parser.parse_args()
 
     # 如果提供了模型名称参数，使用它；否则使用默认值
@@ -437,5 +443,7 @@ if __name__ == "__main__":
         MODEL_NAME = args.model_name
     if args.num_modalities:
         NUM_MODALITIES = args.num_modalities
+    if args.dataset_name:
+        DATASET_NAME = args.dataset_name
 
-    main(num_modalities=NUM_MODALITIES, use_lora=args.use_lora)
+    main(num_modalities=NUM_MODALITIES, use_lora=args.use_lora, r=args.r)
