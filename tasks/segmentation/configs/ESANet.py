@@ -3,7 +3,7 @@ import argparse
 
 from losses import *
 from .common_cfg import *
-from models.ESANet import ArgumentParserRGBDSegmentation, build_model
+from models.ESANet import build_model, Args
 
 # 导入分布式训练相关模块
 import dinov3.distributed as distributed
@@ -13,11 +13,7 @@ def get_cfg(dataset_name=None):
     if dataset_name is None:
         raise ValueError("Dataset name must be specified")
 
-    parser = ArgumentParserRGBDSegmentation(
-        description='Efficient RGBD Indoor Sematic Segmentation (Training)',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.set_common_args()
-    args = parser.parse_args()
+    args = Args()
 
     base_lr = args.lr
     batch_size = 8

@@ -255,3 +255,47 @@ class ArgumentParserRGBDSegmentation(argparse.ArgumentParser):
                           default=False,
                           action='store_true',
                           help='Only one batch in training and validation.')
+
+
+class Args:
+
+    def __init__(self):
+        self.results_dir = './results'
+        self.last_ckpt = ''
+        self.pretrained_dir = '/home/yyyjvm/Checkpoints/imagenet'
+        self.pretrained_scenenet = ''
+        self.pretrained_on_imagenet = True
+        self.finetune = None
+        self.freeze = 0
+        self.batch_size = 8
+        self.batch_size_valid = None
+        self.height = 512
+        self.width = 512
+        self.epochs = 500
+        self.lr = 1e-4
+        self.weight_decay = 1e-4
+        self.momentum = 0.9
+        self.optimizer = 'Adam'
+        self.class_weighting = 'median_frequency'
+        self.c_for_logarithmic_weighting = 1.02
+        self.he_init = False
+        self.valid_full_res = False
+        self.activation = 'relu'
+        self.encoder = 'resnet34'
+        self.encoder_block = 'NonBottleneck1D'
+        self.nr_decoder_blocks = [3]
+        self.encoder_depth = None
+        self.modality = 'rgbd'
+        self.encoder_decoder_fusion = 'add'
+        self.context_module = 'ppm'
+        self.channels_decoder = 128
+        self.decoder_channels_mode = 'decreasing'
+        self.fuse_depth_in_rgb_encoder = 'SE-add'
+        self.upsampling = 'learned-3x3-zeropad'
+        self.dataset = 'nyuv2'
+        self.dataset_dir = './datasets'
+        self.raw_depth = False
+        self.aug_scale_min = 1.0
+        self.aug_scale_max = 1.4
+        self.workers = 8
+        self.debug = False
