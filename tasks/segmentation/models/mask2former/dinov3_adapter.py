@@ -12,7 +12,7 @@ import torch.utils.checkpoint as cp
 
 from functools import partial
 
-from tasks.segmentation.models.utils.ms_deform_attn import MSDeformAttn
+from models.utils.ms_deform_attn import MSDeformAttn
 
 
 def drop_path(x, drop_prob: float = 0.0, training: bool = False):

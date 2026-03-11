@@ -14,8 +14,8 @@ from typing import Callable
 import timm
 from transformers import AutoImageProcessor
 
-from tasks.segmentation.models.UMFormer.IIA import IIA, ChannelAttention
-from tasks.segmentation.models.umamba_v12.ssm import Mamba_Block
+from models.UMFormer.IIA import IIA, ChannelAttention
+from models.umamba_v12.ssm import Mamba_Block
 
 
 class SeparableConvBNReLU(nn.Sequential):
