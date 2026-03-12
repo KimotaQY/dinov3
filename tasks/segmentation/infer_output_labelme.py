@@ -292,100 +292,107 @@ def load_model(model_cfg):
     return model, cfg
 
 
-def predict(input, model):
+def predict(input, model, **kwargs):
     model.eval()
     with torch.no_grad():
-        pred = slide_inference(input, model, n_output_channels=N_CLASSES)
+        window_size = kwargs.get("window_size", (512, 512))
+        s_w = int(window_size[0] * 2 / 3)
+        pred = slide_inference(input,
+                               model,
+                               n_output_channels=N_CLASSES,
+                               crop_size=window_size,
+                               stride=(s_w, s_w),
+                               batch_size=8)
 
     return pred
 
 
 if __name__ == "__main__":
-    img_path = "/home/yyyjvm/SS-datasets/YYYJ_dataset/train_tmp/1638431685714513920BJ220181031.tif"
-    if not os.path.exists(img_path):
-        print("图像不存在")
+    import torchvision.transforms.functional as TF
+    from PIL import Image
 
-    # 读取GeoTIFF图像
-    with rasterio.open(img_path) as src:
-        # 读取图像数据
-        image_data = src.read()  # 读取所有波段
-        profile = src.profile.copy()  # 获取图像的元数据
-        print(f"tif元数据：{profile}")
+    # 获取文件夹下的tif影像
+    img_list = [
+        os.path.join("/home/yyyj/SS-datasets/YYYJ_dataset/train_tmp", file)
+        for file in os.listdir("/home/yyyj/SS-datasets/YYYJ_dataset/train_tmp")
+        if file.endswith(".tif")
+    ]
 
-        # 如果是多波段图像，选择前3个波段作为RGB
-        if image_data.shape[0] >= 3:
-            image_data = image_data[:3, :, :]  # 取前3个波段
-        elif image_data.shape[0] == 1:
-            # 如果是单波段，复制为3个波段
-            image_data = np.repeat(image_data, 3, axis=0)
+    for img_path in img_list:
+        # img_path = "/home/yyyj/SS-datasets/YYYJ_dataset/train_tmp/1638431685714513920BJ320220907.tif"
+        if not os.path.exists(img_path):
+            print("图像不存在")
 
-        # 转换为模型所需的格式 (H, W, C) -> (C, H, W)
-        image_data = np.transpose(image_data, (1, 2, 0))
+        # 读取GeoTIFF图像
+        with rasterio.open(img_path) as src:
+            # 读取图像数据
+            image_data = src.read()  # 读取所有波段
+            profile = src.profile.copy()  # 获取图像的元数据
+            print(f"tif元数据：{profile}")
 
-        # 归一化到0-1范围
-        image_data = image_data.astype('float32') / 255.0 if image_data.max(
-        ) > 1.0 else image_data.astype('float32')
+            data = Image.open(img_path).convert('RGB')
+            data = TF.to_tensor(data)
+            data = TF.normalize(data, (0.485, 0.456, 0.406),
+                                (0.229, 0.224, 0.225))
+            device = torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu")
+            data = data.unsqueeze(0).to(device)
 
-        # 转换为模型所需的格式
-        data = np.transpose(image_data, (2, 0, 1))  # (H, W, C) -> (C, H, W)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        data = torch.from_numpy(data).unsqueeze(0).to(device)
+        model_cfg = {
+            "model_name":
+            "DINOv3_ResNet50",
+            "dataset_name":
+            "YYYJ",
+            "modality":
+            "uni",
+            "classification_model_path":
+            "/home/yyyj/SS-projects/dinov3/tasks/segmentation/logs/DINOv3_ResNet50/YYYJ_20260225_160823/DINOv3_ResNet50_YYYJ_e15_mIoU54.67.pth"
+        }
 
-    model_cfg = {
-        "model_name":
-        "DINOv3",
-        "dataset_name":
-        "YYYJ",
-        "modality":
-        "uni",
-        "classification_model_path":
-        "/home/yyyjvm/SS-projects/dinov3/tasks/segmentation/logs/DINOv3/YYYJ_20251226_083701/DINOv3_YYYJ_e9_mIoU54.5.pth"
-    }
+        # 进行推理
+        model, cfg = load_model(model_cfg)
+        N_CLASSES = len(cfg.get("labels"))
+        LABELS = cfg.get("labels")
+        pred = predict(data, model, windows_size=cfg.get("window_size"))
 
-    # 进行推理
-    model, cfg = load_model(model_cfg)
-    # colored_pred, overlay = predict(data, model)
-    N_CLASSES = len(cfg.get("labels"))
-    LABELS = cfg.get("labels")
-    pred = predict(data, model)
+        # 将预测结果转换为GeoTIFF格式并保存
+        pred_np = pred.cpu().numpy()[0]  # 移除batch维度
+        pred_class = np.argmax(pred_np, axis=0)  # 获取每个像素的分类结果
 
-    # 将预测结果转换为GeoTIFF格式并保存
-    pred_np = pred.cpu().numpy()[0]  # 移除batch维度
-    pred_class = np.argmax(pred_np, axis=0)  # 获取每个像素的分类结果
+        # 更新profile以适应单波段分类结果
+        profile.update({'count': 1, 'dtype': rasterio.uint8})
 
-    # 更新profile以适应单波段分类结果
-    profile.update({'count': 1, 'dtype': rasterio.uint8})
+        # 生成输出文件路径
+        base_name = os.path.splitext(os.path.basename(img_path))[0]
+        base_dir = os.path.join(os.path.dirname(img_path), "outputs")
+        os.makedirs(base_dir, exist_ok=True)
+        output_geotiff_path = os.path.join(base_dir,
+                                           f"{base_name}_classified.tif")
+        output_wkt_path = os.path.join(base_dir, f"{base_name}_polygons.json")
+        output_labelme_path = os.path.join(base_dir,
+                                           f"{base_name}_labelme.json")
+        output_shp_path = os.path.join(base_dir, f"{base_name}_polygons.shp")
 
-    # 生成输出文件路径
-    base_name = os.path.splitext(os.path.basename(img_path))[0]
-    output_geotiff_path = os.path.join(os.path.dirname(img_path),
-                                       f"{base_name}_classified.tif")
-    output_wkt_path = os.path.join(os.path.dirname(img_path),
-                                   f"{base_name}_polygons.json")
-    output_labelme_path = os.path.join(os.path.dirname(img_path),
-                                       f"{base_name}_labelme.json")
-    output_shp_path = os.path.join(os.path.dirname(img_path),
-                                   f"{base_name}_polygons.shp")
+        # 保存分类结果为GeoTIFF
+        with rasterio.open(output_geotiff_path, 'w', **profile) as dst:
+            dst.write(pred_class.astype(rasterio.uint8), 1)
 
-    # 保存分类结果为GeoTIFF
-    # with rasterio.open(output_geotiff_path, 'w', **profile) as dst:
-    #     dst.write(pred_class.astype(rasterio.uint8), 1)
+        # 生成WKT格式的多边形
+        wkt_polygons = generate_wkt_polygons(pred_class, profile)
 
-    # 生成WKT格式的多边形
-    wkt_polygons = generate_wkt_polygons(pred_class, profile)
-
-    # 生成Shapefile
-    if SHAPEFILE_SUPPORT:
-        success = generate_shapefile_from_wkt(wkt_polygons, output_shp_path,
-                                              profile)
-        if success:
-            print(f"Shapefile saved to {output_shp_path}")
+        # 生成Shapefile
+        if SHAPEFILE_SUPPORT:
+            success = generate_shapefile_from_wkt(wkt_polygons,
+                                                  output_shp_path, profile)
+            if success:
+                print(f"Shapefile saved to {output_shp_path}")
+            else:
+                print(f"Failed to save Shapefile to {output_shp_path}")
         else:
-            print(f"Failed to save Shapefile to {output_shp_path}")
-    else:
-        print("Shapefile support not available due to missing geopandas")
+            print("Shapefile support not available due to missing geopandas")
 
-    # 生成labelme格式的JSON
-    # 创建标签映射字典
-    labels_map = {i: LABELS[i] for i in range(len(LABELS))}
-    save_labelme_format(pred_class, img_path, output_labelme_path, labels_map)
+        # 生成labelme格式的JSON
+        # 创建标签映射字典
+        labels_map = {i: LABELS[i] for i in range(len(LABELS))}
+        save_labelme_format(pred_class, img_path, output_labelme_path,
+                            labels_map)
