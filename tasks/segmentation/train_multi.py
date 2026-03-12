@@ -436,6 +436,10 @@ if __name__ == "__main__":
                         default=False,
                         help='use lora or not')
     parser.add_argument('--r', type=int, default=3, help='lora r')
+    parser.add_argument('--backbone-type',
+                        type=str,
+                        default='dinov3_vits16',
+                        help='backbone type')
     args = parser.parse_args()
 
     # 如果提供了模型名称参数，使用它；否则使用默认值
@@ -446,4 +450,7 @@ if __name__ == "__main__":
     if args.dataset_name:
         DATASET_NAME = args.dataset_name
 
-    main(num_modalities=NUM_MODALITIES, use_lora=args.use_lora, r=args.r)
+    main(num_modalities=NUM_MODALITIES,
+         use_lora=args.use_lora,
+         r=args.r,
+         backbone_type=args.backbone_type)
