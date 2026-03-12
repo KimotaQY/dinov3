@@ -69,6 +69,8 @@ class DINOSegmentModule(nn.Module):
         # Important: we freeze the backbone
         if freeze_backbone:
             self.backbone.requires_grad_(False)
+        else:
+            self.backbone.requires_grad_(True)
 
         embed_dim = self.backbone.embed_dim
 
@@ -108,6 +110,7 @@ class DINOSegmentModule(nn.Module):
         # Add LoRA layers to the encoder
         self.use_lora = use_lora
         if self.use_lora:
+            print(f"=====r=====: {r}")
             self.lora_layers = list(range(len(self.backbone.blocks)))
             self.w_a = []
             self.w_b = []
@@ -157,19 +160,17 @@ class DINOSegmentModule(nn.Module):
 
         if len(modalities) == 1:
             if self.adapter is not None:
-                with torch.autocast("cuda", torch.float32):
-                    outputs = self.backbone.get_intermediate_layers(
-                        x, n=BACKBONE_INTERMEDIATE_LAYERS[self.backbone_type])
+                outputs = self.backbone.get_intermediate_layers(
+                    x, n=BACKBONE_INTERMEDIATE_LAYERS[self.backbone_type])
                 # 使用适配器处理多尺度特征
                 multi_scale_features = self.adapter(outputs,
                                                     patch_h=patch_h,
                                                     patch_w=patch_w)
             else:
-                with torch.autocast("cuda", torch.float32):
-                    outputs = self.backbone.get_intermediate_layers(
-                        x,
-                        n=BACKBONE_INTERMEDIATE_LAYERS[self.backbone_type],
-                        reshape=True)
+                outputs = self.backbone.get_intermediate_layers(
+                    x,
+                    n=BACKBONE_INTERMEDIATE_LAYERS[self.backbone_type],
+                    reshape=True)
                 # 直接处理中间层输出
                 multi_scale_features = []
                 for i, output in enumerate(outputs):
@@ -332,9 +333,6 @@ class ResNetSegmentModule(nn.Module):
         # 主输入x
         x = modalities[0]
         _, C, H, W = x.shape
-        patch_h, patch_w = x.shape[-2] // 16, x.shape[-1] // 16
-
-        scale_factors = [4, 2, 1, 0.5]
 
         if len(modalities) == 1:
             outputs = self.backbone(x)
@@ -347,38 +345,11 @@ class ResNetSegmentModule(nn.Module):
                 if modality_input.shape[1] != C and idx > 0:
                     modality_input = modality_input.repeat(1, C, 1, 1)
 
-                outputs_modality = self.backbone.get_intermediate_layers(
-                    modality_input,
-                    n=BACKBONE_INTERMEDIATE_LAYERS["dinov3_vitl16"])
+                outputs_modality = self.backbone(modality_input)
                 outputs_modalities.append(outputs_modality)
 
-            if self.adapter is not None:
-                # 使用适配器处理多尺度特征
-                processed_outputs_modalities = self.adapter(
-                    *outputs_modalities, patch_h=patch_h, patch_w=patch_w)
-            else:
-                processed_outputs_modalities = []
-                for outputs_modality in outputs_modalities:
-                    # 直接处理中间层输出
-                    processed_outputs_modality = []
-                    for i, output in enumerate(outputs_modality):
-                        output = output.permute(0, 2, 1).reshape(
-                            (output.shape[0], output.shape[-1], patch_h,
-                             patch_w))
-
-                        if i < len(scale_factors):
-                            output = F.interpolate(
-                                output,
-                                scale_factor=scale_factors[i],
-                                mode="bilinear",
-                                align_corners=False)
-                        processed_outputs_modality.append(output)
-
-                    processed_outputs_modalities.append(
-                        processed_outputs_modality)
-
             # 将处理后的所有模态特征传递给解码器
-            logits = self.decoder(*processed_outputs_modalities)
+            logits = self.decoder(*outputs_modalities)
 
         _H, _W = logits.shape[2:]
         if _H != H or _W != W:
