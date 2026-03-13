@@ -176,6 +176,7 @@ def slide_inference(inputs: torch.Tensor,
                                        mask_pred.to(torch.float))
 
         # 将结果添加到最终预测图中
+        batch_preds = batch_preds.to(inputs.device)
         for j, (y1, y2, x1, x2) in enumerate(batch_coords):
             preds[:, :, y1:y2, x1:x2] += batch_preds[j]
             count_mat[:, :, y1:y2, x1:x2] += 1
