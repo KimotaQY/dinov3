@@ -7,6 +7,8 @@ from PIL import Image
 from PIL import ImageOps
 import torchvision.transforms.functional as TF
 
+Image.MAX_IMAGE_PIXELS = 1000000000  # 10 亿像素
+
 from utils.transform import *
 
 palette = {
@@ -41,7 +43,7 @@ invert_palette = {v: k for k, v in palette.items()}
 class YYYJ_Dataset(torch.utils.data.Dataset):
 
     def __init__(self,
-                 ids,
+                 filenames,
                  data_dir,
                  label_dir,
                  data_type,
@@ -55,8 +57,10 @@ class YYYJ_Dataset(torch.utils.data.Dataset):
         self.cache_size = cache_size  # 限制缓存数量
 
         # List of files
-        self.data_files = [data_dir.format(id) for id in ids]
-        self.label_files = [label_dir.format(id) for id in ids]
+        self.data_files = [data_dir.format(filename) for filename in filenames]
+        self.label_files = [
+            label_dir.format(filename) for filename in filenames
+        ]
 
         # Sanity check : raise an error if some files do not exist
         for file in self.data_files + self.label_files:
@@ -121,15 +125,60 @@ class YYYJ_Dataset(torch.utils.data.Dataset):
                                         border=(0, 0, pad_width, pad_height),
                                         fill=(0, 0, 0))
 
+            # # Get a random patch
+            # x1, x2, y1, y2 = self.get_random_pos(data, self.window_size)
+            # if isinstance(data, np.ndarray):
+            #     data = data[:, x1:x2, y1:y2]
+            #     label = label[x1:x2, y1:y2]
+            # elif isinstance(data, Image.Image):
+            #     data = data.crop(
+            #         (y1, x1, y2, x2))  # PIL使用(left, upper, right, lower)
+            #     label = label.crop((y1, x1, y2, x2))
+
             # Get a random patch
-            x1, x2, y1, y2 = self.get_random_pos(data, self.window_size)
-            if isinstance(data, np.ndarray):
-                data = data[:, x1:x2, y1:y2]
-                label = label[x1:x2, y1:y2]
-            elif isinstance(data, Image.Image):
-                data = data.crop(
-                    (y1, x1, y2, x2))  # PIL使用(left, upper, right, lower)
-                label = label.crop((y1, x1, y2, x2))
+            max_attempts = 50  # 最大尝试次数
+            attempt = 0
+            valid_patch = False
+
+            while attempt < max_attempts and not valid_patch:
+                x1, x2, y1, y2 = self.get_random_pos(data, self.window_size)
+
+                # 裁剪出候选区域
+                if isinstance(data, np.ndarray):
+                    candidate_data = data[:, x1:x2, y1:y2]
+                    candidate_label = label[x1:x2, y1:y2]
+                elif isinstance(data, Image.Image):
+                    candidate_data = data.crop((y1, x1, y2, x2))
+                    candidate_label = label.crop((y1, x1, y2, x2))
+
+                # 检查是否为黑色区域 (对 PIL Image)
+                if isinstance(data, Image.Image):
+                    data_array = np.array(candidate_data)
+                    # 计算平均亮度
+                    mean_brightness = np.mean(data_array)
+                    # 如果平均亮度低于阈值 (例如 20)，认为是黑色区域
+                    if mean_brightness < 1:
+                        attempt += 1
+                        continue
+                    else:
+                        valid_patch = True
+                        data = candidate_data
+                        label = candidate_label
+                elif isinstance(data, np.ndarray):
+                    # 对 numpy 数组的检查
+                    mean_brightness = np.mean(candidate_data)
+                    if mean_brightness < 1:
+                        attempt += 1
+                        continue
+                    else:
+                        valid_patch = True
+                        data = candidate_data
+                        label = candidate_label
+
+            # 如果所有尝试都失败，使用最后一次的位置
+            if not valid_patch:
+                data = candidate_data
+                label = candidate_label
 
             # 弱增强
             data, label, _ = resize(data, label, None, (0.5, 2.0))

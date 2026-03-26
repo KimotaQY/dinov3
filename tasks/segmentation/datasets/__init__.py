@@ -58,18 +58,24 @@ def build_dataset(dataset_name, data_type="test", **kwargs):
                              window_size=kwargs.get("window_size", (224, 224)),
                              normalize_type=normalize_type)
     elif dataset_name == "YYYJ":
-        train_dir = f"{MS_ROOT_DIR}/SS-datasets/YYYJ_dataset/new_train"
-        test_dir = f"{MS_ROOT_DIR}/SS-datasets/YYYJ_dataset/new_test"
-        # 读取文件夹中所有tif文件名
-        ids = [
-            f.split(".")[0] for f in os.listdir(test_dir) if f.endswith(".tif")
-        ] if data_type == "test" else [
-            f.split(".")[0] for f in os.listdir(train_dir)
-            if f.endswith(".tif")
-        ]
-        data_dir = test_dir + "/{}.tif" if data_type == "test" else train_dir + "/{}.tif"
-        label_dir = test_dir + "/label_masks/{}.tif" if data_type == "test" else train_dir + "/label_masks/{}.tif"
-        return YYYJ_Dataset(ids=ids,
+        root_dir = f"{MS_ROOT_DIR}/SS-datasets/YYYJ_dataset/20260316/"
+
+        if data_type == "train":
+            train_txt_path = f"{root_dir}/train.txt"
+            with open(train_txt_path, 'r') as f:
+                filenames = [
+                    line.strip() for line in f.readlines() if line.strip()
+                ]
+        else:
+            test_txt_path = f"{root_dir}/test.txt"
+            with open(test_txt_path, 'r') as f:
+                filenames = [
+                    line.strip() for line in f.readlines() if line.strip()
+                ]
+
+        data_dir = root_dir + "images/{}"
+        label_dir = root_dir + "label_masks/{}"
+        return YYYJ_Dataset(filenames=filenames,
                             data_dir=data_dir,
                             label_dir=label_dir,
                             data_type=data_type,
