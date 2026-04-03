@@ -21,3 +21,9 @@ dinov3/eval/segmentation/models/utils/ops/MultiScaleDeformableAttention.cpython-
 
 # Ignore visual results
 vis_results/
+
+# Checkpoints
+*.pth
+*.pt
+*.bin
+*.onnx
