@@ -92,15 +92,15 @@ def make_inference(
     return pred
 
 
-def slide_inference(inputs: torch.Tensor,
-                    segmentation_model: nn.Module,
-                    decoder_head_type: str = "linear",
-                    n_output_channels: int = 256,
-                    crop_size: Tuple = (512, 512),
-                    stride: Tuple = (341, 341),
-                    num_max_forward: int = 1,
-                    dsm: torch.Tensor = None,
-                    batch_size: int = 4):
+def _slide_inference(inputs: torch.Tensor,
+                     segmentation_model: nn.Module,
+                     decoder_head_type: str = "linear",
+                     n_output_channels: int = 256,
+                     crop_size: Tuple = (512, 512),
+                     stride: Tuple = (341, 341),
+                     num_max_forward: int = 1,
+                     dsm: torch.Tensor = None,
+                     batch_size: int = 4):
     """Inference by sliding-window with overlap, with batch processing optimization.
     If h_crop > h_img or w_crop > w_img, the small patch will be used to
     decode without padding.
@@ -186,5 +186,135 @@ def slide_inference(inputs: torch.Tensor,
         dummy_input = inputs.new_zeros((1, C, h_crop, w_crop))
         _ = segmentation_model.predict(dummy_input,
                                        rescale_to=dummy_input.shape[2:])
+    assert (count_mat == 0).sum() == 0
+    return preds.cpu() / count_mat.cpu()
+
+
+def slide_inference(inputs: torch.Tensor,
+                    segmentation_model: nn.Module,
+                    decoder_head_type: str = "linear",
+                    n_output_channels: int = 256,
+                    crop_size: Tuple = (512, 512),
+                    stride: Tuple = (341, 341),
+                    num_max_forward: int = 1,
+                    dsm: torch.Tensor = None,
+                    batch_size: int = 4,
+                    skip_black: bool = False,
+                    black_threshold: float = -1.5,
+                    background_class: int = 0):
+    """Inference by sliding-window with overlap, with batch processing optimization.
+    
+    Args:
+        inputs (tensor): the tensor should have a shape NxCxHxW
+        segmentation_model (nn.Module): model to use for evaluating on dense tasks
+        n_output_channels (int): number of output channels
+        crop_size (tuple): (h_crop, w_crop)
+        stride (tuple): (h_stride, w_stride)
+        batch_size (int): number of crops to process in a single batch
+        skip_black (bool): whether to skip black background patches
+        black_threshold (float): threshold for detecting black patches (normalized space)
+        background_class (int): class index for background
+    Returns:
+        Tensor: The output results from model of each input image.
+    """
+    h_stride, w_stride = stride
+    h_crop, w_crop = crop_size
+    batch_size_input, C, h_img, w_img = inputs.shape
+
+    if h_crop > h_img and w_crop > w_img:
+        h_crop, w_crop = min(h_img, w_img), min(h_img, w_img)
+
+    assert batch_size_input == 1
+
+    h_grids = max(h_img - h_crop + h_stride - 1, 0) // h_stride + 1
+    w_grids = max(w_img - w_crop + w_stride - 1, 0) // w_stride + 1
+
+    preds = inputs.new_zeros(
+        (1, n_output_channels, h_img, w_img)).to(inputs.device)
+    count_mat = inputs.new_zeros(
+        (1, 1, h_img, w_img)).to(torch.int8).to(inputs.device)
+
+    all_crops = []
+    all_coords = []
+    crop_means = []
+
+    for h_idx in range(h_grids):
+        for w_idx in range(w_grids):
+            y1 = h_idx * h_stride
+            x1 = w_idx * w_stride
+            y2 = min(y1 + h_crop, h_img)
+            x2 = min(x1 + w_crop, w_img)
+            y1 = max(y2 - h_crop, 0)
+            x1 = max(x2 - w_crop, 0)
+
+            if dsm is not None:
+                crop_img = inputs[:, :, y1:y2, x1:x2]
+                crop_dsm = dsm[:, :, y1:y2, x1:x2]
+                all_crops.append((crop_img, crop_dsm))
+                crop_means.append(crop_img.mean().item())
+            else:
+                crop_img = inputs[:, :, y1:y2, x1:x2]
+                all_crops.append(crop_img)
+                crop_means.append(crop_img.mean().item())
+
+            all_coords.append((y1, y2, x1, x2))
+
+    if skip_black:
+        valid_indices = [
+            i for i, mean in enumerate(crop_means) if mean >= black_threshold
+        ]
+        skipped_indices = [
+            i for i, mean in enumerate(crop_means) if mean < black_threshold
+        ]
+    else:
+        valid_indices = list(range(len(all_crops)))
+        skipped_indices = []
+
+    for i in range(0, len(valid_indices), batch_size):
+        batch_valid_indices = valid_indices[i:i + batch_size]
+
+        device = next(segmentation_model.parameters()).device
+
+        if dsm is not None:
+            batch_img = torch.cat(
+                [all_crops[j][0] for j in batch_valid_indices],
+                dim=0).to(device)
+            batch_dsm = torch.cat(
+                [all_crops[j][1] for j in batch_valid_indices],
+                dim=0).to(device)
+            batch_preds = segmentation_model(batch_img, batch_dsm)
+        else:
+            batch_img = torch.cat([all_crops[j] for j in batch_valid_indices],
+                                  dim=0).to(device)
+            batch_preds = segmentation_model(batch_img)
+
+        if decoder_head_type == "m2f":
+            mask_pred, mask_cls = batch_preds["pred_masks"], batch_preds[
+                "pred_logits"]
+            mask_cls = F.softmax(mask_cls, dim=-1)[..., :-1]
+            mask_pred = mask_pred.sigmoid()
+            batch_preds = torch.einsum("bqc,bqhw->bchw",
+                                       mask_cls.to(torch.float),
+                                       mask_pred.to(torch.float))
+
+        batch_preds = batch_preds.to(inputs.device)
+
+        for idx, j in enumerate(batch_valid_indices):
+            y1, y2, x1, x2 = all_coords[j]
+            preds[:, :, y1:y2, x1:x2] += batch_preds[idx]
+            count_mat[:, :, y1:y2, x1:x2] += 1
+
+    for j in skipped_indices:
+        y1, y2, x1, x2 = all_coords[j]
+        if isinstance(all_crops[j], tuple):
+            h_crop_cur, w_crop_cur = all_crops[j][0].shape[2:]
+        else:
+            h_crop_cur, w_crop_cur = all_crops[j].shape[2:]
+        black_pred = inputs.new_zeros(
+            (1, n_output_channels, h_crop_cur, w_crop_cur))
+        black_pred[:, background_class, :, :] = 1.0
+        preds[:, :, y1:y2, x1:x2] += black_pred
+        count_mat[:, :, y1:y2, x1:x2] += 1
+
     assert (count_mat == 0).sum() == 0
     return preds.cpu() / count_mat.cpu()

@@ -49,7 +49,7 @@ class YYYJ_Dataset(torch.utils.data.Dataset):
                  data_type,
                  window_size=(224, 224),
                  normalize_type=None,
-                 cache_size=500):
+                 cache_size=100):
         super(YYYJ_Dataset, self).__init__()
 
         self.data_type = data_type
@@ -82,7 +82,7 @@ class YYYJ_Dataset(torch.utils.data.Dataset):
             self.imagenet_std = None
 
     def __len__(self):
-        interval_num = (256**2 / self.window_size[0]**2) * 1000  # 256尺寸时为*1000
+        interval_num = (256**2 / self.window_size[0]**2) * 120  # 256尺寸时为*1000
         data_len = len(self.data_files
                        ) * interval_num if self.data_type == 'train' else len(
                            self.data_files)
@@ -225,7 +225,10 @@ class YYYJ_Dataset(torch.utils.data.Dataset):
                 data, self.imagenet_mean,
                 self.imagenet_std)  # Normalize with ImageNet mean and std
 
-        return data, label
+        if self.data_type == "train":
+            return data, label
+        else:
+            return data, label, self.data_files[idx]
 
     @staticmethod
     def convert_from_color(arr_3d, palette=invert_palette):
